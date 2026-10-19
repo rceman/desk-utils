@@ -1,0 +1,11 @@
+[package]
+name = "diskhound"
+version = "0.1.0"
+edition = "2024"
+description = "Fast parallel disk usage analyzer — find where your disk space went"
+
+[dependencies]
+
+[profile.release]
+lto = "thin"
+strip = true
