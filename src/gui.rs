@@ -208,6 +208,14 @@ unsafe extern "system" {
     fn ShowWindow(h: HWND, cmd: i32) -> i32;
     fn UpdateWindow(h: HWND) -> i32;
     fn LoadCursorW(inst: HINSTANCE, name: *const u16) -> HCURSOR;
+    fn LoadImageW(
+        inst: HINSTANCE,
+        name: *const u16,
+        kind: u32,
+        cx: i32,
+        cy: i32,
+        flags: u32,
+    ) -> HICON;
     fn SetWindowTextW(h: HWND, text: *const u16) -> i32;
     fn SendMessageW(h: HWND, m: u32, w: usize, l: isize) -> isize;
     fn SetTimer(h: HWND, id: usize, ms: u32, f: usize) -> usize;
@@ -1425,6 +1433,23 @@ pub fn run() {
             return;
         }
         SetMenu(hwnd, bar_menu);
+        // icon: diskhound.ico next to the exe
+        let mut exe = vec![0u16; 512];
+        let n = GetModuleFileNameW(std::ptr::null_mut(), exe.as_mut_ptr(), 512);
+        if n > 0 {
+            let p = String::from_utf16_lossy(&exe[..n as usize]);
+            if let Some(dir) = std::path::Path::new(&p).parent() {
+                let ico = wide(&format!(r"{}\diskhound.ico", dir.display()));
+                let big = LoadImageW(std::ptr::null_mut(), ico.as_ptr(), 1, 32, 32, 0x10);
+                let small = LoadImageW(std::ptr::null_mut(), ico.as_ptr(), 1, 16, 16, 0x10);
+                if !big.is_null() {
+                    SendMessageW(hwnd, 0x0080, 1, big as isize);
+                }
+                if !small.is_null() {
+                    SendMessageW(hwnd, 0x0080, 0, small as isize);
+                }
+            }
+        }
         SetTimer(hwnd, TIMER_UI, 150, 0);
         ShowWindow(hwnd, 5);
         UpdateWindow(hwnd);
