@@ -94,8 +94,13 @@ pub(crate) const WM_SIZE: u32 = 0x0005;
 pub(crate) const WM_PAINT: u32 = 0x000F;
 pub(crate) const WM_CLOSE: u32 = 0x0010;
 pub(crate) const WM_CONTEXTMENU: u32 = 0x007B;
+pub(crate) const WM_ERASEBKGND: u32 = 0x0014;
+pub(crate) const WM_CTLCOLOREDIT: u32 = 0x0133;
+pub(crate) const WM_CTLCOLORLISTBOX: u32 = 0x0134;
+pub(crate) const WM_CTLCOLORSTATIC: u32 = 0x0138;
 pub(crate) const WM_COMMAND: u32 = 0x0111;
 pub(crate) const WM_TIMER: u32 = 0x0113;
+pub(crate) const EM_SETBKGNDCOLOR: u32 = 0x0434;
 pub(crate) const WM_APP_LOAD: u32 = 0x8000;
 pub(crate) const WM_SETFONT: u32 = 0x0030;
 pub(crate) const BM_GETCHECK: u32 = 0x00F0;
@@ -165,6 +170,7 @@ pub(crate) const ID_EXPLORER: usize = 106;
 pub(crate) const ID_DELETE: usize = 107;
 pub(crate) const ID_ADMIN: usize = 108;
 pub(crate) const ID_LIST: usize = 109;
+pub(crate) const ID_DARK: usize = 110;
 pub(crate) const ID_PICK_OK: usize = 300;
 pub(crate) const ID_PICK_CANCEL: usize = 301;
 pub(crate) const ID_PICK_CHECK0: usize = 400;
@@ -299,4 +305,39 @@ unsafe extern "system" {
         len: u32,
         retlen: *mut u32,
     ) -> i32;
+}
+
+#[link(name = "uxtheme")]
+unsafe extern "system" {
+    pub(crate) fn SetWindowThemeW(h: HWND, sub: *const u16, list: *const u16) -> i32;
+}
+
+#[link(name = "dwmapi")]
+unsafe extern "system" {
+    pub(crate) fn DwmSetWindowAttribute(
+        h: HWND,
+        attr: u32,
+        v: *const c_void,
+        sz: u32,
+    ) -> i32;
+}
+
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    pub(crate) fn CreateSolidBrush(c: u32) -> HBRUSH;
+    pub(crate) fn SetTextColor(hdc: *mut c_void, c: u32) -> u32;
+    pub(crate) fn SetBkColor(hdc: *mut c_void, c: u32) -> u32;
+    pub(crate) fn SetBkMode(hdc: *mut c_void, m: i32) -> i32;
+}
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    pub(crate) fn FillRect(hdc: *mut c_void, r: *const Rect, b: HBRUSH) -> i32;
+    pub(crate) fn InvalidateRect(h: HWND, r: *const Rect, erase: i32) -> i32;
+    pub(crate) fn GetSysColorBrush(i: i32) -> HBRUSH;
+}
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    pub(crate) fn GetClientRect(h: HWND, r: *mut Rect) -> i32;
 }

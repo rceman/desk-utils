@@ -7,6 +7,7 @@ use super::ffi::*;
 use super::picker::*;
 use super::state::*;
 use super::workers::*;
+use super::apply_theme;
 
 // ---------- actions ----------
 
@@ -250,6 +251,18 @@ pub(crate) fn on_action(hwnd: HWND, id: usize, notify: u32) {
             if !is_elevated() {
                 relaunch_admin(hwnd);
             }
+        }
+        ID_DARK => {
+            {
+                let mut g = SHARED.lock().unwrap();
+                g.dark = !g.dark;
+            }
+            apply_theme(hwnd);
+            set_status(if SHARED.lock().unwrap().dark {
+                "dark mode on"
+            } else {
+                "dark mode off"
+            });
         }
         ID_EXIT => unsafe {
             DestroyWindow(hwnd);

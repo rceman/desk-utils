@@ -87,6 +87,44 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: usize, l: isize) ->
             poll_shared(hwnd);
             0
         }
+        WM_ERASEBKGND => {
+            if SHARED.lock().unwrap().dark {
+                let mut r = Rect {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                unsafe {
+                    GetClientRect(hwnd, &mut r);
+                    FillRect(w as *mut c_void, &r, dark_brush() as HBRUSH);
+                }
+                return 1;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
+        }
+        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            if SHARED.lock().unwrap().dark {
+                let hdc = w as *mut c_void;
+                unsafe {
+                    SetTextColor(hdc, DARK_FG);
+                    SetBkColor(hdc, DARK_BG);
+                }
+                return dark_brush() as isize;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
+        }
+        WM_CTLCOLORSTATIC => {
+            if SHARED.lock().unwrap().dark {
+                let hdc = w as *mut c_void;
+                unsafe {
+                    SetTextColor(hdc, DARK_FG);
+                    SetBkMode(hdc, 1);
+                }
+                return dark_brush() as isize;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
+        }
         WM_PAINT => {
             let mut ps = PaintStruct {
                 hdc: std::ptr::null_mut(),
@@ -130,6 +168,44 @@ fn layout(w: i32, h: i32) {
     }
 }
 
+const DARK_BG: u32 = 0x001E_1E1E;
+const DARK_FG: u32 = 0x00E8_E8E8;
+
+static DARK_BRUSH: Mutex<usize> = Mutex::new(0);
+
+fn dark_brush() -> usize {
+    let mut b = DARK_BRUSH.lock().unwrap();
+    if *b == 0 {
+        *b = unsafe { CreateSolidBrush(DARK_BG) } as usize;
+    }
+    *b
+}
+
+pub(crate) fn apply_theme(hwnd: HWND) {
+    let (dark, kids, edit) = {
+        let g = SHARED.lock().unwrap();
+        let w = WNDS.lock().unwrap();
+        (g.dark, w.kids.clone(), w.edit)
+    };
+    let theme = wide(if dark { "DarkMode_Explorer" } else { "Explorer" });
+    unsafe {
+        let d: u32 = if dark { 1 } else { 0 };
+        DwmSetWindowAttribute(hwnd, 20, &d as *const u32 as *const c_void, 4);
+        for k in &kids {
+            let h = *k as HWND;
+            SetWindowThemeW(h, theme.as_ptr(), std::ptr::null());
+            InvalidateRect(h, std::ptr::null(), 1);
+        }
+        SendMessageW(
+            edit as HWND,
+            EM_SETBKGNDCOLOR,
+            0,
+            (if dark { DARK_BG } else { 0x00FF_FFFF }) as isize,
+        );
+        InvalidateRect(hwnd, std::ptr::null(), 1);
+    }
+}
+
 fn create_children(hwnd: HWND) {
     let inst = unsafe { GetModuleHandleW(std::ptr::null_mut()) };
     let ui_font = unsafe {
@@ -167,10 +243,10 @@ fn create_children(hwnd: HWND) {
         mk("BUTTON", x, 8, w, 28, text, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, id)
     };
 
-    btn(8, 110, "Scan C:\\", ID_SCAN_C);
-    btn(126, 130, "Scan folder...", ID_SCAN_FOLDER);
-    btn(264, 120, "Compact WSL", ID_COMPACT);
-    mk("STATIC", 392, 12, 40, 20, "View:", WS_CHILD | WS_VISIBLE | SS_LEFT, 0);
+    let b1 = btn(8, 110, "Scan C:\\", ID_SCAN_C);
+    let b2 = btn(126, 130, "Scan folder...", ID_SCAN_FOLDER);
+    let b3 = btn(264, 120, "Compact WSL", ID_COMPACT);
+    let lbl = mk("STATIC", 392, 12, 40, 20, "View:", WS_CHILD | WS_VISIBLE | SS_LEFT, 0);
     let combo = mk(
         "COMBOBOX",
         434,
@@ -187,8 +263,8 @@ fn create_children(hwnd: HWND) {
         }
     }
     unsafe { SendMessageW(combo, CB_SETCURSEL, 0, 0) };
-    btn(592, 95, "Explorer", ID_EXPLORER);
-    btn(694, 80, "Delete", ID_DELETE);
+    let b4 = btn(592, 95, "Explorer", ID_EXPLORER);
+    let b5 = btn(694, 80, "Delete", ID_DELETE);
     // admin relaunch lives in Actions menu; status bar shows [admin] when elevated
     let admin_btn = 0usize as HWND;
 
@@ -278,6 +354,19 @@ fn create_children(hwnd: HWND) {
     w.status = status as usize;
     w.admin_btn = admin_btn as usize;
     w.combo = combo as usize;
+    w.kids = vec![
+        b1 as usize,
+        b2 as usize,
+        b3 as usize,
+        b4 as usize,
+        b5 as usize,
+        lbl as usize,
+        combo as usize,
+        edit as usize,
+        list as usize,
+        prog as usize,
+        status as usize,
+    ];
 }
 
 fn poll_shared(_hwnd: HWND) {
@@ -319,7 +408,7 @@ fn poll_shared(_hwnd: HWND) {
         unsafe {
             SetWindowTextW(wnds.edit as HWND, wide(&text).as_ptr());
             SendMessageW(wnds.prog as HWND, PBM_SETMARQUEE, 0, 0);
-            SendMessageW(wnds.prog as HWND, PBM_SETPOS, 1000, 0);
+            SendMessageW(wnds.prog as HWND, PBM_SETPOS, 0, 0);
         }
     }
     if let Some(items) = g.list.take() {
@@ -329,7 +418,7 @@ fn poll_shared(_hwnd: HWND) {
                 SendMessageW(wnds.list as HWND, LB_ADDSTRING, 0, wide(label).as_ptr() as isize);
             }
             SendMessageW(wnds.prog as HWND, PBM_SETMARQUEE, 0, 0);
-            SendMessageW(wnds.prog as HWND, PBM_SETPOS, 1000, 0);
+            SendMessageW(wnds.prog as HWND, PBM_SETPOS, 0, 0);
         }
     }
     if let Some(msg) = g.done_msg.take() {
@@ -376,6 +465,8 @@ pub fn run() {
             ID_ADMIN,
             wide("Run as administrator").as_ptr(),
         );
+        AppendMenuW(actions, MF_SEPARATOR, 0, std::ptr::null());
+        AppendMenuW(actions, MF_STRING, ID_DARK, wide("Dark mode").as_ptr());
         AppendMenuW(actions, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(actions, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
         AppendMenuW(bar_menu, MF_POPUP, actions as usize, wide("Actions").as_ptr());

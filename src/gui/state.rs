@@ -21,6 +21,7 @@ pub(crate) struct Shared {
     pub(crate) view: usize, // 0=files 1=dirs (list content)
     pub(crate) last_root: PathBuf,
     pub(crate) elevated: bool,
+    pub(crate) dark: bool,
 }
 
 pub(crate) static SHARED: Mutex<Shared> = Mutex::new(Shared {
@@ -36,6 +37,7 @@ pub(crate) static SHARED: Mutex<Shared> = Mutex::new(Shared {
     view: 0,
     last_root: PathBuf::new(),
     elevated: false,
+    dark: false,
 });
 
 pub(crate) struct Windows {
@@ -46,6 +48,7 @@ pub(crate) struct Windows {
     pub(crate) prog: usize,
     pub(crate) admin_btn: usize,
     pub(crate) combo: usize,
+    pub(crate) kids: Vec<usize>,
 }
 
 pub(crate) static WNDS: Mutex<Windows> = Mutex::new(Windows {
@@ -56,6 +59,7 @@ pub(crate) static WNDS: Mutex<Windows> = Mutex::new(Windows {
     prog: 0,
     admin_btn: 0,
     combo: 0,
+    kids: Vec::new(),
 });
 
 pub(crate) struct PickState {
