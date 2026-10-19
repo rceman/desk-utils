@@ -4,35 +4,7 @@ mod compact;
 mod gui;
 mod scan;
 
-use std::env;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-
-#[cfg(windows)]
-fn attach_console() {
-    unsafe extern "system" {
-        fn AttachConsole(pid: u32) -> i32;
-    }
-    unsafe {
-        AttachConsole(0xFFFF_FFFF); // ATTACH_PARENT_PROCESS
-    }
-}
-
-#[cfg(not(windows))]
-fn attach_console() {}
-
-#[cfg(windows)]
-fn set_utf8_console() {
-    unsafe extern "system" {
-        fn SetConsoleOutputCP(cp: u32) -> i32;
-    }
-    unsafe {
-        SetConsoleOutputCP(65001);
-    }
-}
-
-#[cfg(not(windows))]
-fn set_utf8_console() {}
 
 #[cfg(windows)]
 fn to_extended(p: &Path) -> PathBuf {
@@ -97,87 +69,9 @@ fn bar(pct: f64, width: usize) -> String {
     format!("{}{}", "#".repeat(filled), "-".repeat(width - filled))
 }
 
-fn usage() -> ! {
-    eprintln!("diskhound — find where disk space went");
-    eprintln!("usage: diskhound [PATH] [--depth N] [--top N] [--files N] [--min PCT]");
-    eprintln!("       diskhound compact [FILE.vhdx] [--yes] [--dry-run] [--no-shutdown]");
-    eprintln!("       diskhound              (no args) -> GUI on Windows");
-    eprintln!("  PATH    directory to scan (default: C:\\ on Windows, . otherwise)");
-    eprintln!("  --depth tree depth shown   (default 4)");
-    eprintln!("  --top   children per level (default 8)");
-    eprintln!("  --files largest files list (default 25)");
-    eprintln!("  --min   min %% of total to show  (default 0.2)");
-    std::process::exit(2);
-}
-
 fn main() {
-    let argv: Vec<String> = env::args().skip(1).collect();
-
     #[cfg(windows)]
-    if argv.is_empty() || argv.iter().any(|a| a == "--gui") {
-        gui::run();
-        return;
-    }
-
-    attach_console();
-    set_utf8_console();
-
-    if argv.first().map(|a| a == "compact").unwrap_or(false) {
-        let mut path_arg = None;
-        let mut yes = false;
-        let mut dry = false;
-        let mut no_shutdown = false;
-        for a in &argv[1..] {
-            match a.as_str() {
-                "--yes" | "-y" => yes = true,
-                "--dry-run" | "-n" => dry = true,
-                "--no-shutdown" => no_shutdown = true,
-                "-h" | "--help" => usage(),
-                _ if a.starts_with("--") => usage(),
-                _ => path_arg = Some(a.clone()),
-            }
-        }
-        std::process::exit(compact::run(path_arg, yes, dry, no_shutdown));
-    }
-
-    let mut path_arg: Option<String> = None;
-    let mut max_depth = 4usize;
-    let mut top_k = 8usize;
-    let mut top_files_n = 25usize;
-    let mut min_pct = 0.2f64;
-
-    let mut it = argv.into_iter();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--depth" => max_depth = it.next().and_then(|v| v.parse().ok()).unwrap_or(max_depth),
-            "--top" => top_k = it.next().and_then(|v| v.parse().ok()).unwrap_or(top_k),
-            "--files" => {
-                top_files_n = it.next().and_then(|v| v.parse().ok()).unwrap_or(top_files_n)
-            }
-            "--min" => min_pct = it.next().and_then(|v| v.parse().ok()).unwrap_or(min_pct),
-            "-h" | "--help" => usage(),
-            _ if a.starts_with("--") => usage(),
-            _ => path_arg = Some(a),
-        }
-    }
-
-    let default_root = if cfg!(windows) { r"C:\" } else { "." };
-    let root = to_extended(Path::new(path_arg.as_deref().unwrap_or(default_root)));
-
-    println!("diskhound — sniffing out disk usage in {}", disp(&root));
-    let data = scan::scan(root, None);
-    #[cfg(windows)]
-    let admin_hint = !gui::is_elevated();
+    gui::run();
     #[cfg(not(windows))]
-    let admin_hint = false;
-    let text = scan::render(&data, max_depth, top_k, top_files_n, min_pct, admin_hint);
-    println!("{text}");
-
-    if std::io::stdin().is_terminal() {
-        use std::io::Write;
-        print!("press Enter to exit");
-        let _ = std::io::stdout().flush();
-        let mut buf = String::new();
-        let _ = std::io::stdin().read_line(&mut buf);
-    }
+    eprintln!("diskhound is a Windows-only app");
 }

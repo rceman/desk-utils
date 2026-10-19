@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -150,79 +149,6 @@ pub fn execute(
         on_progress((i + 1) as f64 / targets.len() as f64);
     }
     report
-}
-
-/// CLI entry point (`diskhound compact`).
-pub fn run(path_arg: Option<String>, assume_yes: bool, dry_run: bool, no_shutdown: bool) -> i32 {
-    let targets = match &path_arg {
-        Some(p) => {
-            let path = crate::to_extended(Path::new(p));
-            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            vec![DiskInfo {
-                name: String::new(),
-                path,
-                size,
-            }]
-        }
-        None => discover(),
-    };
-
-    if targets.is_empty() {
-        println!("no WSL .vhdx disks found");
-        return 0;
-    }
-
-    let mut total = 0u64;
-    println!("WSL virtual disks:");
-    for t in &targets {
-        total += t.size;
-        let label = if t.name.is_empty() {
-            disp(&t.path)
-        } else {
-            format!("{}  ({})", t.name, disp(&t.path))
-        };
-        println!("  {:>10}  {}", fmt_size(t.size), label);
-    }
-    println!("total on disk: {}\n", fmt_size(total));
-
-    if dry_run {
-        println!("--dry-run: nothing changed");
-        return 0;
-    }
-
-    if !assume_yes && std::io::stdin().is_terminal() {
-        use std::io::Write;
-        print!("This will SHUT DOWN all WSL sessions, then compact the disks.\nContinue? [y/N] ");
-        let _ = std::io::stdout().flush();
-        let mut buf = String::new();
-        let _ = std::io::stdin().read_line(&mut buf);
-        if !matches!(buf.trim().to_lowercase().as_str(), "y" | "yes" | "д" | "да") {
-            println!("aborted");
-            return 0;
-        }
-    }
-
-    let report = execute(
-        &targets,
-        !no_shutdown,
-        |s| println!("{s}"),
-        |f| {
-            use std::io::Write;
-            print!("\r  overall: {:>5.1}%", f * 100.0);
-            let _ = std::io::stdout().flush();
-        },
-    );
-
-    println!();
-    for e in &report.errors {
-        eprintln!("error: {e}");
-    }
-    println!("\ntotal freed: {}", fmt_size(report.freed));
-    if report.errors.is_empty() {
-        0
-    } else {
-        1
-    }
 }
 
 fn err_desc(code: u32) -> &'static str {
