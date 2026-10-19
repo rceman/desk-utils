@@ -8,6 +8,7 @@ use super::picker::*;
 use super::state::*;
 use super::workers::*;
 use super::apply_theme;
+use std::sync::atomic::Ordering;
 
 // ---------- actions ----------
 
@@ -253,16 +254,10 @@ pub(crate) fn on_action(hwnd: HWND, id: usize, notify: u32) {
             }
         }
         ID_DARK => {
-            {
-                let mut g = SHARED.lock().unwrap();
-                g.dark = !g.dark;
-            }
+            let d = !DARK.load(Ordering::Relaxed);
+            DARK.store(d, Ordering::Relaxed);
             apply_theme(hwnd);
-            set_status(if SHARED.lock().unwrap().dark {
-                "dark mode on"
-            } else {
-                "dark mode off"
-            });
+            set_status(if d { "dark mode on" } else { "dark mode off" });
         }
         ID_EXIT => unsafe {
             DestroyWindow(hwnd);

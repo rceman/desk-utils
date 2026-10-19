@@ -1,6 +1,7 @@
 #![cfg(windows)]
 use std::ffi::c_void;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use crate::scan::{ScanData, ScanProgress};
@@ -21,7 +22,6 @@ pub(crate) struct Shared {
     pub(crate) view: usize, // 0=files 1=dirs (list content)
     pub(crate) last_root: PathBuf,
     pub(crate) elevated: bool,
-    pub(crate) dark: bool,
 }
 
 pub(crate) static SHARED: Mutex<Shared> = Mutex::new(Shared {
@@ -37,7 +37,6 @@ pub(crate) static SHARED: Mutex<Shared> = Mutex::new(Shared {
     view: 0,
     last_root: PathBuf::new(),
     elevated: false,
-    dark: false,
 });
 
 pub(crate) struct Windows {
@@ -51,6 +50,7 @@ pub(crate) struct Windows {
     pub(crate) kids: Vec<usize>,
 }
 
+pub(crate) static DARK: AtomicBool = AtomicBool::new(false);
 pub(crate) static WNDS: Mutex<Windows> = Mutex::new(Windows {
     main: 0,
     edit: 0,

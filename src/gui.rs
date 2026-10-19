@@ -9,6 +9,7 @@ mod actions;
 pub(crate) use state::is_elevated;
 
 use std::ffi::c_void;
+use std::sync::atomic::Ordering;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -89,7 +90,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: usize, l: isize) ->
             0
         }
         WM_ERASEBKGND => {
-            if SHARED.lock().unwrap().dark {
+            if DARK.load(Ordering::Relaxed) {
                 let mut r = Rect {
                     left: 0,
                     top: 0,
@@ -105,7 +106,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: usize, l: isize) ->
             unsafe { DefWindowProcW(hwnd, msg, w, l) }
         }
         WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
-            if SHARED.lock().unwrap().dark {
+            if DARK.load(Ordering::Relaxed) {
                 let hdc = w as *mut c_void;
                 unsafe {
                     SetTextColor(hdc, DARK_FG);
@@ -116,7 +117,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: usize, l: isize) ->
             unsafe { DefWindowProcW(hwnd, msg, w, l) }
         }
         WM_CTLCOLORSTATIC => {
-            if SHARED.lock().unwrap().dark {
+            if DARK.load(Ordering::Relaxed) {
                 let hdc = w as *mut c_void;
                 unsafe {
                     SetTextColor(hdc, DARK_FG);
@@ -183,10 +184,10 @@ fn dark_brush() -> usize {
 }
 
 pub(crate) fn apply_theme(hwnd: HWND) {
-    let (dark, kids, edit) = {
-        let g = SHARED.lock().unwrap();
+    let dark = DARK.load(Ordering::Relaxed);
+    let (kids, edit) = {
         let w = WNDS.lock().unwrap();
-        (g.dark, w.kids.clone(), w.edit)
+        (w.kids.clone(), w.edit)
     };
     let theme = wide(if dark { "DarkMode_Explorer" } else { "Explorer" });
     unsafe {
