@@ -6,11 +6,165 @@ use std::process::Command;
 
 use crate::{disp, fmt_size};
 
+#[derive(Clone)]
+pub struct DiskInfo {
+    /// WSL distro name (empty when unknown / explicit file)
+    pub name: String,
+    pub path: PathBuf,
+    pub size: u64,
+}
+
+pub struct CompactReport {
+    pub freed: u64,
+    pub errors: Vec<String>,
+}
+
+/// Find all WSL/VM virtual disks.
+pub fn discover() -> Vec<DiskInfo> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    // distro base paths from the registry (covers wsl --import locations too)
+    for (name, base) in lxss_entries() {
+        let mut paths = Vec::new();
+        collect_vhdx(&base, &mut paths, &mut seen, 0);
+        for path in paths {
+            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            out.push(DiskInfo {
+                name: name.clone(),
+                path,
+                size,
+            });
+        }
+    }
+
+    // fallback: Packages/*/LocalState and Docker/wsl under every user profile
+    if let Ok(users) = fs::read_dir(crate::to_extended(Path::new(r"C:\Users"))) {
+        for u in users.flatten() {
+            let pkgs = u.path().join(r"AppData\Local\Packages");
+            if let Ok(list) = fs::read_dir(&pkgs) {
+                for p in list.flatten() {
+                    let mut paths = Vec::new();
+                    collect_vhdx(&p.path().join("LocalState"), &mut paths, &mut seen, 0);
+                    for path in paths {
+                        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                        out.push(DiskInfo {
+                            name: String::new(),
+                            path,
+                            size,
+                        });
+                    }
+                }
+            }
+            let mut paths = Vec::new();
+            collect_vhdx(
+                &u.path().join(r"AppData\Local\Docker\wsl"),
+                &mut paths,
+                &mut seen,
+                0,
+            );
+            for path in paths {
+                let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                out.push(DiskInfo {
+                    name: String::new(),
+                    path,
+                    size,
+                });
+            }
+        }
+    }
+
+    out.sort_by(|a, b| b.size.cmp(&a.size));
+    out
+}
+
+/// Shut down WSL, enable sparse mode, compact each selected disk.
+/// `on_status` gets human-readable step text; `on_progress` gets 0..1 fraction.
+pub fn execute(
+    targets: &[DiskInfo],
+    shutdown: bool,
+    mut on_status: impl FnMut(&str),
+    mut on_progress: impl FnMut(f64),
+) -> CompactReport {
+    let mut report = CompactReport {
+        freed: 0,
+        errors: Vec::new(),
+    };
+
+    if shutdown {
+        on_status("shutting down WSL...");
+        match Command::new("wsl.exe").arg("--shutdown").status() {
+            Ok(s) if !s.success() => {
+                report.errors.push(format!("wsl --shutdown exited {s}"))
+            }
+            Err(e) => report
+                .errors
+                .push(format!("cannot run wsl.exe --shutdown: {e}")),
+            _ => {}
+        }
+    }
+
+    for t in targets {
+        if t.name.is_empty() {
+            continue;
+        }
+        match Command::new("wsl.exe")
+            .args(["--manage", &t.name, "--set-sparse", "true"])
+            .output()
+        {
+            Ok(o) if o.status.success() => on_status(&format!(
+                "{}: sparse mode enabled (auto-shrinks in future)",
+                t.name
+            )),
+            _ => {}
+        }
+    }
+
+    for (i, t) in targets.iter().enumerate() {
+        let before = fs::metadata(&t.path).map(|m| m.len()).unwrap_or(t.size);
+        on_status(&format!(
+            "compacting {} ({})...",
+            disp(&t.path),
+            fmt_size(before)
+        ));
+        let base = i as f64 / targets.len() as f64;
+        let span = 1.0 / targets.len() as f64;
+        match compact_vhdx(&t.path, |f| on_progress(base + f * span)) {
+            Ok(()) => {
+                let after = fs::metadata(&t.path).map(|m| m.len()).unwrap_or(0);
+                let d = before.saturating_sub(after);
+                report.freed += d;
+                on_status(&format!(
+                    "  {} -> {}  (freed {})",
+                    fmt_size(before),
+                    fmt_size(after),
+                    fmt_size(d)
+                ));
+            }
+            Err(code) => {
+                report
+                    .errors
+                    .push(format!("{}: error {code} {}", disp(&t.path), err_desc(code)));
+            }
+        }
+        on_progress((i + 1) as f64 / targets.len() as f64);
+    }
+    report
+}
+
+/// CLI entry point (`diskhound compact`).
 pub fn run(path_arg: Option<String>, assume_yes: bool, dry_run: bool, no_shutdown: bool) -> i32 {
-    let distros = lxss_entries();
     let targets = match &path_arg {
-        Some(p) => vec![crate::to_extended(Path::new(p))],
-        None => find_vhdx(&distros),
+        Some(p) => {
+            let path = crate::to_extended(Path::new(p));
+            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            vec![DiskInfo {
+                name: String::new(),
+                path,
+                size,
+            }]
+        }
+        None => discover(),
     };
 
     if targets.is_empty() {
@@ -20,10 +174,14 @@ pub fn run(path_arg: Option<String>, assume_yes: bool, dry_run: bool, no_shutdow
 
     let mut total = 0u64;
     println!("WSL virtual disks:");
-    for p in &targets {
-        let sz = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-        total += sz;
-        println!("  {:>10}  {}", fmt_size(sz), disp(p));
+    for t in &targets {
+        total += t.size;
+        let label = if t.name.is_empty() {
+            disp(&t.path)
+        } else {
+            format!("{}  ({})", t.name, disp(&t.path))
+        };
+        println!("  {:>10}  {}", fmt_size(t.size), label);
     }
     println!("total on disk: {}\n", fmt_size(total));
 
@@ -44,51 +202,27 @@ pub fn run(path_arg: Option<String>, assume_yes: bool, dry_run: bool, no_shutdow
         }
     }
 
-    if !no_shutdown {
-        println!("shutting down WSL...");
-        match Command::new("wsl.exe").arg("--shutdown").status() {
-            Ok(s) if !s.success() => eprintln!("  wsl --shutdown exited with {s}"),
-            Err(e) => eprintln!("  cannot run wsl.exe: {e}"),
-            _ => {}
-        }
-    }
+    let report = execute(
+        &targets,
+        !no_shutdown,
+        |s| println!("{s}"),
+        |f| {
+            use std::io::Write;
+            print!("\r  overall: {:>5.1}%", f * 100.0);
+            let _ = std::io::stdout().flush();
+        },
+    );
 
-    if path_arg.is_none() {
-        for (name, _) in &distros {
-            match Command::new("wsl.exe")
-                .args(["--manage", name, "--set-sparse", "true"])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    println!("  {name}: sparse mode enabled (auto-shrinks in future)")
-                }
-                _ => {}
-            }
-        }
+    println!();
+    for e in &report.errors {
+        eprintln!("error: {e}");
     }
-
-    let mut freed = 0u64;
-    for p in &targets {
-        let before = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-        println!("compacting {} ({})...", disp(p), fmt_size(before));
-        match compact_vhdx(p) {
-            Ok(()) => {
-                let after = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-                let d = before.saturating_sub(after);
-                freed += d;
-                println!(
-                    "  {} -> {}  (freed {})",
-                    fmt_size(before),
-                    fmt_size(after),
-                    fmt_size(d)
-                );
-            }
-            Err(code) => eprintln!("  failed: windows error {code} ({})", err_desc(code)),
-        }
+    println!("\ntotal freed: {}", fmt_size(report.freed));
+    if report.errors.is_empty() {
+        0
+    } else {
+        1
     }
-
-    println!("\ntotal freed: {}", fmt_size(freed));
-    0
 }
 
 fn err_desc(code: u32) -> &'static str {
@@ -170,44 +304,13 @@ fn collect_vhdx(dir: &Path, out: &mut Vec<PathBuf>, seen: &mut HashSet<String>, 
     }
 }
 
-fn find_vhdx(distros: &[(String, PathBuf)]) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-
-    // distro base paths from the registry (covers wsl --import locations too)
-    for (_, base) in distros {
-        collect_vhdx(base, &mut out, &mut seen, 0);
-    }
-
-    // fallback: Packages/*/LocalState and Docker/wsl under every user profile
-    if let Ok(users) = fs::read_dir(crate::to_extended(Path::new(r"C:\Users"))) {
-        for u in users.flatten() {
-            let pkgs = u.path().join(r"AppData\Local\Packages");
-            if let Ok(list) = fs::read_dir(&pkgs) {
-                for p in list.flatten() {
-                    collect_vhdx(&p.path().join("LocalState"), &mut out, &mut seen, 0);
-                }
-            }
-            collect_vhdx(
-                &u.path().join(r"AppData\Local\Docker\wsl"),
-                &mut out,
-                &mut seen,
-                0,
-            );
-        }
-    }
-
-    out.sort_by_key(|p| std::cmp::Reverse(fs::metadata(p).map(|m| m.len()).unwrap_or(0)));
-    out
-}
-
 #[cfg(windows)]
-fn compact_vhdx(path: &Path) -> Result<(), u32> {
-    vdisk::compact(path)
+fn compact_vhdx(path: &Path, progress: impl FnMut(f64)) -> Result<(), u32> {
+    vdisk::compact(path, progress)
 }
 
 #[cfg(not(windows))]
-fn compact_vhdx(_path: &Path) -> Result<(), u32> {
+fn compact_vhdx(_path: &Path, _progress: impl FnMut(f64)) -> Result<(), u32> {
     Err(50) // ERROR_NOT_SUPPORTED
 }
 
@@ -217,6 +320,8 @@ mod vdisk {
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use std::ptr;
+    use std::thread::sleep;
+    use std::time::Duration;
 
     type Handle = *mut c_void;
 
@@ -242,8 +347,25 @@ mod vdisk {
         _pad: [u32; 5], // union is 24 bytes in Version2 layout
     }
 
+    #[repr(C)]
+    struct Overlapped {
+        internal: usize,
+        internal_high: usize,
+        offset: u32,
+        offset_high: u32,
+        h_event: Handle,
+    }
+
+    #[repr(C)]
+    struct VirtualDiskProgress {
+        operation_status: u32,
+        current: u64,
+        final_: u64,
+    }
+
     const VIRTUAL_DISK_ACCESS_METAOPS: u32 = 0x0020_0000;
     const VIRTUAL_DISK_ACCESS_GET_INFO: u32 = 0x0008_0000;
+    const ERROR_IO_PENDING: u32 = 997;
 
     #[link(name = "virtdisk")]
     unsafe extern "system" {
@@ -260,16 +382,27 @@ mod vdisk {
             handle: Handle,
             flags: u32,
             params: *const c_void,
-            overlapped: *mut c_void,
+            overlapped: *mut Overlapped,
+        ) -> u32;
+        fn GetVirtualDiskOperationProgress(
+            handle: Handle,
+            overlapped: *mut Overlapped,
+            progress: *mut VirtualDiskProgress,
         ) -> u32;
     }
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn CloseHandle(h: Handle) -> i32;
+        fn CreateEventW(
+            attrs: *const c_void,
+            manual_reset: i32,
+            initial_state: i32,
+            name: *const u16,
+        ) -> Handle;
     }
 
-    pub fn compact(path: &Path) -> Result<(), u32> {
+    pub fn compact(path: &Path, mut progress: impl FnMut(f64)) -> Result<(), u32> {
         let wide: Vec<u16> = path
             .as_os_str()
             .encode_wide()
@@ -295,8 +428,57 @@ mod vdisk {
         if err != 0 {
             return Err(err);
         }
-        let err = unsafe { CompactVirtualDisk(h, 0, ptr::null(), ptr::null_mut()) };
+        let res = compact_async(h, &mut progress);
         unsafe { CloseHandle(h) };
+        res
+    }
+
+    fn compact_async(h: Handle, progress: &mut impl FnMut(f64)) -> Result<(), u32> {
+        let event = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+        if event.is_null() {
+            return compact_sync(h);
+        }
+        let mut ov = Overlapped {
+            internal: 0,
+            internal_high: 0,
+            offset: 0,
+            offset_high: 0,
+            h_event: event,
+        };
+        let call = unsafe { CompactVirtualDisk(h, 0, ptr::null(), &mut ov) };
+        let res = if call == 0 {
+            Ok(())
+        } else if call == ERROR_IO_PENDING {
+            loop {
+                let mut prog = VirtualDiskProgress {
+                    operation_status: ERROR_IO_PENDING,
+                    current: 0,
+                    final_: 0,
+                };
+                let st = unsafe { GetVirtualDiskOperationProgress(h, &mut ov, &mut prog) };
+                if st == ERROR_IO_PENDING || prog.operation_status == ERROR_IO_PENDING {
+                    if prog.final_ > 0 {
+                        progress((prog.current as f64 / prog.final_ as f64).clamp(0.0, 1.0));
+                    }
+                    sleep(Duration::from_millis(200));
+                    continue;
+                }
+                break if prog.operation_status == 0 {
+                    progress(1.0);
+                    Ok(())
+                } else {
+                    Err(prog.operation_status)
+                };
+            }
+        } else {
+            Err(call)
+        };
+        unsafe { CloseHandle(event) };
+        res
+    }
+
+    fn compact_sync(h: Handle) -> Result<(), u32> {
+        let err = unsafe { CompactVirtualDisk(h, 0, ptr::null(), ptr::null_mut()) };
         if err != 0 { Err(err) } else { Ok(()) }
     }
 }
