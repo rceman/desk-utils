@@ -51,7 +51,9 @@ pub(crate) fn start_scan(root: PathBuf) {
 
     let main_hwnd = WNDS.lock().unwrap().main;
     unsafe {
-        SendMessageW(WNDS.lock().unwrap().prog as HWND, PBM_SETMARQUEE, 1, 30);
+        let prog_hwnd = WNDS.lock().unwrap().prog as HWND;
+        ShowWindow(prog_hwnd, 5);
+        SendMessageW(prog_hwnd, PBM_SETMARQUEE, 1, 30);
     }
 
     thread::spawn(move || {
@@ -85,6 +87,11 @@ pub(crate) fn start_scan(root: PathBuf) {
 
 pub(crate) fn start_compact(selected: Vec<DiskInfo>) {
     let main_hwnd = WNDS.lock().unwrap().main;
+    unsafe {
+        let prog_hwnd = WNDS.lock().unwrap().prog as HWND;
+        ShowWindow(prog_hwnd, 5);
+        SendMessageW(prog_hwnd, PBM_SETRANGE32, 0, 1000);
+    }
     thread::spawn(move || {
         let report = compact::execute(
             &selected,

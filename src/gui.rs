@@ -411,6 +411,7 @@ fn poll_shared(_hwnd: HWND) {
             SetWindowTextW(wnds.edit as HWND, wide(&text).as_ptr());
             SendMessageW(wnds.prog as HWND, PBM_SETMARQUEE, 0, 0);
             SendMessageW(wnds.prog as HWND, PBM_SETPOS, 0, 0);
+            ShowWindow(wnds.prog as HWND, 0);
         }
     }
     if let Some(items) = g.list.take() {
@@ -421,11 +422,13 @@ fn poll_shared(_hwnd: HWND) {
             }
             SendMessageW(wnds.prog as HWND, PBM_SETMARQUEE, 0, 0);
             SendMessageW(wnds.prog as HWND, PBM_SETPOS, 0, 0);
+            ShowWindow(wnds.prog as HWND, 0);
         }
     }
     if let Some(msg) = g.done_msg.take() {
         unsafe {
             SendMessageW(wnds.prog as HWND, PBM_SETMARQUEE, 0, 0);
+            ShowWindow(wnds.prog as HWND, 0);
             MessageBoxW(
                 wnds.main as HWND,
                 wide(&msg).as_ptr(),
