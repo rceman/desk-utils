@@ -193,6 +193,7 @@ pub(crate) fn apply_theme(hwnd: HWND) {
     unsafe {
         let d: u32 = if dark { 1 } else { 0 };
         DwmSetWindowAttribute(hwnd, 20, &d as *const u32 as *const c_void, 4);
+        DwmSetWindowAttribute(hwnd, 19, &d as *const u32 as *const c_void, 4);
         for k in &kids {
             let h = *k as HWND;
             SetWindowTheme(h, theme.as_ptr(), std::ptr::null());

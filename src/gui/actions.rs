@@ -257,7 +257,6 @@ pub(crate) fn on_action(hwnd: HWND, id: usize, notify: u32) {
             let d = !DARK.load(Ordering::Relaxed);
             DARK.store(d, Ordering::Relaxed);
             apply_theme(hwnd);
-            set_status(if d { "dark mode on" } else { "dark mode off" });
         }
         ID_EXIT => unsafe {
             DestroyWindow(hwnd);
