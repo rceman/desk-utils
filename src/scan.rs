@@ -351,3 +351,163 @@ pub fn render_files(data: &ScanData, n: usize) -> Vec<(String, PathBuf)> {
         })
         .collect()
 }
+
+// ---------- persistent scan cache ----------
+
+const CACHE_MAGIC: u32 = 0x4448_4302; // "DHC" + v2 (no per-dir top_files)
+
+fn w_u32(b: &mut Vec<u8>, v: u32) {
+    b.extend(v.to_le_bytes());
+}
+fn w_u64(b: &mut Vec<u8>, v: u64) {
+    b.extend(v.to_le_bytes());
+}
+fn w_str(b: &mut Vec<u8>, s: &str) {
+    w_u32(b, s.len() as u32);
+    b.extend(s.as_bytes());
+}
+fn w_path(b: &mut Vec<u8>, p: &Path) {
+    w_str(b, &p.to_string_lossy());
+}
+
+struct Rd<'a> {
+    b: &'a [u8],
+    i: usize,
+}
+impl Rd<'_> {
+    fn u32(&mut self) -> Option<u32> {
+        let e = self.i + 4;
+        let v = u32::from_le_bytes(self.b.get(self.i..e)?.try_into().ok()?);
+        self.i = e;
+        Some(v)
+    }
+    fn u64(&mut self) -> Option<u64> {
+        let e = self.i + 8;
+        let v = u64::from_le_bytes(self.b.get(self.i..e)?.try_into().ok()?);
+        self.i = e;
+        Some(v)
+    }
+    fn str(&mut self) -> Option<String> {
+        let n = self.u32()? as usize;
+        let e = self.i + n;
+        let s = String::from_utf8(self.b.get(self.i..e)?.to_vec()).ok()?;
+        self.i = e;
+        Some(s)
+    }
+    fn path(&mut self) -> Option<PathBuf> {
+        self.str().map(PathBuf::from)
+    }
+}
+
+/// Serialize a scan result; returns true on success. Best-effort.
+pub fn save_cache(data: &ScanData, path: &Path) -> bool {
+    let mut b = Vec::with_capacity(1 << 20);
+    w_u32(&mut b, CACHE_MAGIC);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    w_u64(&mut b, ts);
+    w_path(&mut b, &data.root);
+    w_u64(&mut b, data.elapsed.to_bits());
+    w_u64(&mut b, data.root_total);
+    w_u64(&mut b, data.total_files);
+    w_u64(&mut b, data.errors);
+    w_u32(&mut b, data.totals.len() as u32);
+    for (p, s) in &data.totals {
+        w_path(&mut b, p);
+        w_u64(&mut b, *s);
+    }
+    w_u32(&mut b, data.dirs.len() as u32);
+    for (p, r) in &data.dirs {
+        w_path(&mut b, p);
+        w_u64(&mut b, r.own_bytes);
+        w_u64(&mut b, r.files);
+        w_u64(&mut b, r.errors);
+        w_u32(&mut b, r.subdirs.len() as u32);
+        for sd in &r.subdirs {
+            w_path(&mut b, sd);
+        }
+        // per-dir top_files are not cached — render uses global_files only
+        w_u32(&mut b, 0);
+    }
+    w_u32(&mut b, data.global_files.len() as u32);
+    for (s, f) in &data.global_files {
+        w_u64(&mut b, *s);
+        w_path(&mut b, f);
+    }
+    std::fs::write(path, b).is_ok()
+}
+
+/// Load a cached scan; returns (data, unix timestamp of the scan).
+pub fn load_cache(path: &Path) -> Option<(ScanData, u64)> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut r = Rd { b: &bytes, i: 0 };
+    if r.u32()? != CACHE_MAGIC {
+        return None;
+    }
+    let ts = r.u64()?;
+    let root = r.path()?;
+    let elapsed = f64::from_bits(r.u64()?);
+    let root_total = r.u64()?;
+    let total_files = r.u64()?;
+    let errors = r.u64()?;
+    let n = r.u32()? as usize;
+    let mut totals = HashMap::with_capacity(n);
+    for _ in 0..n {
+        let p = r.path()?;
+        let s = r.u64()?;
+        totals.insert(p, s);
+    }
+    let n = r.u32()? as usize;
+    let mut dirs = HashMap::with_capacity(n);
+    for _ in 0..n {
+        let p = r.path()?;
+        let own_bytes = r.u64()?;
+        let files = r.u64()?;
+        let errors = r.u64()?;
+        let ns = r.u32()? as usize;
+        let mut subdirs = Vec::with_capacity(ns);
+        for _ in 0..ns {
+            subdirs.push(r.path()?);
+        }
+        let nf = r.u32()? as usize;
+        let mut top_files = Vec::with_capacity(nf);
+        for _ in 0..nf {
+            let s = r.u64()?;
+            let f = r.path()?;
+            top_files.push((s, f));
+        }
+        dirs.insert(
+            p.clone(),
+            DirReport {
+                path: p,
+                own_bytes,
+                files,
+                subdirs,
+                top_files,
+                errors,
+            },
+        );
+    }
+    let n = r.u32()? as usize;
+    let mut global_files = Vec::with_capacity(n);
+    for _ in 0..n {
+        let s = r.u64()?;
+        let f = r.path()?;
+        global_files.push((s, f));
+    }
+    Some((
+        ScanData {
+            root,
+            dirs,
+            totals,
+            global_files,
+            total_files,
+            errors,
+            elapsed,
+            root_total,
+        },
+        ts,
+    ))
+}
