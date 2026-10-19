@@ -1,3 +1,5 @@
+mod compact;
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -217,7 +219,8 @@ fn print_tree(
 
 fn usage() -> ! {
     eprintln!("diskhound — find where disk space went");
-    eprintln!("usage: diskhound [PATH] [--depth N] [--top N] [--files N]");
+    eprintln!("usage: diskhound [PATH] [--depth N] [--top N] [--files N] [--min PCT]");
+    eprintln!("       diskhound compact [FILE.vhdx] [--yes] [--dry-run] [--no-shutdown]");
     eprintln!("  PATH    directory to scan (default: C:\\ on Windows, . otherwise)");
     eprintln!("  --depth tree depth shown   (default 4)");
     eprintln!("  --top   children per level (default 8)");
@@ -229,13 +232,33 @@ fn usage() -> ! {
 fn main() {
     set_utf8_console();
 
+    let argv: Vec<String> = env::args().skip(1).collect();
+
+    if argv.first().map(|a| a == "compact").unwrap_or(false) {
+        let mut path_arg = None;
+        let mut yes = false;
+        let mut dry = false;
+        let mut no_shutdown = false;
+        for a in &argv[1..] {
+            match a.as_str() {
+                "--yes" | "-y" => yes = true,
+                "--dry-run" | "-n" => dry = true,
+                "--no-shutdown" => no_shutdown = true,
+                "-h" | "--help" => usage(),
+                _ if a.starts_with("--") => usage(),
+                _ => path_arg = Some(a.clone()),
+            }
+        }
+        std::process::exit(compact::run(path_arg, yes, dry, no_shutdown));
+    }
+
     let mut path_arg: Option<String> = None;
     let mut max_depth = 4usize;
     let mut top_k = 8usize;
     let mut top_files_n = 25usize;
     let mut min_pct = 0.2f64;
 
-    let mut it = env::args().skip(1);
+    let mut it = argv.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--depth" => max_depth = it.next().and_then(|v| v.parse().ok()).unwrap_or(max_depth),
@@ -367,6 +390,13 @@ fn main() {
             let pct = *size as f64 / root_total.max(1) as f64 * 100.0;
             println!("  {:>10} {:>5.1}%  {}", fmt_size(*size), pct, disp(p));
         }
+    }
+    if global_files.iter().any(|(_, p)| {
+        p.extension()
+            .map(|e| e.eq_ignore_ascii_case("vhdx"))
+            .unwrap_or(false)
+    }) {
+        println!("\ntip: `diskhound compact` can shrink WSL/VM .vhdx disks and free space");
     }
     println!();
 
