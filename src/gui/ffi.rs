@@ -309,7 +309,7 @@ unsafe extern "system" {
 
 #[link(name = "uxtheme")]
 unsafe extern "system" {
-    pub(crate) fn SetWindowThemeW(h: HWND, sub: *const u16, list: *const u16) -> i32;
+    pub(crate) fn SetWindowTheme(h: HWND, sub: *const u16, list: *const u16) -> i32;
 }
 
 #[link(name = "dwmapi")]

@@ -293,7 +293,8 @@ pub(crate) fn context_menu(hwnd: HWND, lparam: isize) {
             )
         };
         let idx = (r & 0xFFFF) as i32;
-        if r >= 0 && idx >= 0 {
+        let outside = ((r >> 16) & 0xFFFF) != 0; // HIWORD: point outside list
+        if r >= 0 && !outside && idx >= 0 {
             let sel = unsafe { SendMessageW(lb, LB_GETSEL, idx as usize, 0) };
             if sel == 0 {
                 unsafe {

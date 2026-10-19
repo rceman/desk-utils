@@ -8,6 +8,7 @@ mod actions;
 
 pub(crate) use state::is_elevated;
 
+use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -193,7 +194,7 @@ pub(crate) fn apply_theme(hwnd: HWND) {
         DwmSetWindowAttribute(hwnd, 20, &d as *const u32 as *const c_void, 4);
         for k in &kids {
             let h = *k as HWND;
-            SetWindowThemeW(h, theme.as_ptr(), std::ptr::null());
+            SetWindowTheme(h, theme.as_ptr(), std::ptr::null());
             InvalidateRect(h, std::ptr::null(), 1);
         }
         SendMessageW(
