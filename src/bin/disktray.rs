@@ -101,6 +101,7 @@ const NIM_DELETE: u32 = 2;
 const NIF_ICON: u32 = 2;
 const NIF_TIP: u32 = 4;
 const NIF_MESSAGE: u32 = 1;
+const NIF_SHOWTIP: u32 = 0x80;
 const TPM_RIGHTBUTTON: u32 = 0x0002;
 const MF_STRING: u32 = 0;
 const ID_OPEN: usize = 1;
@@ -249,7 +250,7 @@ fn update_tray(hwnd: HWND) {
             cb_size: std::mem::size_of::<NotifyIconData>() as u32,
             hwnd,
             uid: 1,
-            flags: NIF_ICON | NIF_TIP,
+            flags: NIF_ICON | NIF_TIP | NIF_SHOWTIP,
             msg: WM_TRAY,
             icon: make_icon(free, total),
             tip: [0u16; 128],
@@ -285,6 +286,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
         WM_TRAY => {
             // v4: lParam = (uID << 16) | mouse event
             let ev = (l & 0xFFFF) as u32;
+            if ev == 0x0202 {
+                // left click -> open diskhound
+                let exe = format!("{}\\diskhound.exe", exe_dir());
+                unsafe {
+                    ShellExecuteW(hwnd, std::ptr::null(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
+                }
+            }
             if ev == WM_RBUTTONUP {
                 let mut p = Point { x: 0, y: 0 };
                 GetCursorPos(&mut p);
@@ -300,7 +308,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
         }
         WM_COMMAND => match w {
             ID_OPEN => {
-                ShellExecuteW(hwnd, std::ptr::null(), wide("diskhound.exe").as_ptr(), std::ptr::null(), std::ptr::null(), 5);
+                let exe = format!("{}\\diskhound.exe", exe_dir());
+                ShellExecuteW(hwnd, std::ptr::null(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
                 0
             }
             ID_REFRESH => {
@@ -367,7 +376,7 @@ pub fn main() {
             cb_size: std::mem::size_of::<NotifyIconData>() as u32,
             hwnd,
             uid: 1,
-            flags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+            flags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
             msg: WM_TRAY,
             icon: make_icon(1, 1),
             tip: {
