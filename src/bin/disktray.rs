@@ -140,6 +140,8 @@ unsafe extern "system" {
 }
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    fn CreateMutexW(a: *mut c_void, own: i32, n: *const u16) -> *mut c_void;
+    fn GetLastError() -> u32;
     fn GetDiskFreeSpaceExW(d: *const u16, free_caller: *mut u64, total: *mut u64, total_free: *mut u64) -> i32;
 }
 #[link(name = "gdi32")]
@@ -177,17 +179,6 @@ struct Rect {
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-fn tlog(s: String) {
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(r"C:\Tools\diskhound\disktray.log")
-    {
-        let _ = writeln!(f, "{}", s);
-    }
 }
 
 fn fmt_gb(b: u64) -> String {
@@ -236,13 +227,13 @@ fn make_icon(free: u64, total: u64) -> HICON {
             16, 16, 0x10, // LR_LOADFROMFILE
         )
     };
-    tlog(format!("icon {} -> {:#x}", path, icon as usize));
+
     icon
 }
 
 fn update_tray(hwnd: HWND) {
     let cs = c_space();
-    tlog(format!("c_space -> {:?}", cs));
+
     if let Some((free, total)) = cs {
         let used = 1.0 - free as f64 / total.max(1) as f64;
         let tip = format!("C: {} GB free of {} GB ({:.0}% used)", fmt_gb(free), fmt_gb(total), used * 100.0);
@@ -267,9 +258,7 @@ fn update_tray(hwnd: HWND) {
             d.tip[i] = c;
         }
         unsafe {
-            let icon_ok = d.icon as usize;
-            let r = Shell_NotifyIconW(NIM_MODIFY, &mut d);
-            tlog(format!("NIM_MODIFY icon={:#x} ret={}", icon_ok, r));
+            Shell_NotifyIconW(NIM_MODIFY, &mut d);
             if d.icon as usize != 0 {
                 DestroyIcon(d.icon);
             }
@@ -349,6 +338,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
 }
 
 pub fn main() {
+    unsafe {
+        CreateMutexW(std::ptr::null_mut(), 1, wide("disktray-mutex").as_ptr());
+        if GetLastError() == 183 {
+            return; // already running
+        }
+    }
     let inst = unsafe { GetModuleHandleW(std::ptr::null_mut()) };
     let class = wide("disktray");
     let wc = WndClassEx {
