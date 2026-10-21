@@ -1,4 +1,5 @@
 #![cfg(windows)]
+#![windows_subsystem = "windows"]
 //! disktray — system-tray indicator of free space on C:
 //! icon = usage bar (green/orange/red), tooltip = exact numbers.
 //! Right-click: Open diskhound / Refresh / Exit.
@@ -238,6 +239,12 @@ fn make_icon(free: u64, total: u64) -> HICON {
         Rectangle(dc, 1, 1, 15, 15);
         SelectObject(dc, ob);
         SelectObject(dc, old);
+        // GDI writes alpha=0 into 32bpp bitmaps -> force opaque
+        if !bits.is_null() {
+            for i in 0..256isize {
+                *bits.offset(i) |= 0xFF00_0000;
+            }
+        }
         let zero = [0u8; 64]; // all-zero mask = fully opaque icon
         let mask = CreateBitmap(16, 16, 1, 1, zero.as_ptr() as *const c_void);
         let mut ii = IconInfo {
