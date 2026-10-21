@@ -190,26 +190,19 @@ fn c_space() -> Option<(u64, u64)> {
     }
 }
 
-/// 16x16 icon: colored background (red <10% free, yellow <20%, green <30%,
-/// neutral above) + free space text ("12G", or "5%" when very low).
+/// 16x16 icon: system-monitor style — framed box, fill from bottom = % used.
+/// Fill color by free space: red <10%, yellow <20%, green <30%, blue above.
 fn make_icon(free: u64, total: u64) -> HICON {
     let free_pct = free as f64 / total.max(1) as f64 * 100.0;
-    let free_gb = free as f64 / 1_073_741_824.0;
-    let (bg, fg) = if free_pct < 10.0 {
-        (0x0000_30D8, 0x00FF_FFFF) // red, white text
+    let used = (1.0 - free as f64 / total.max(1) as f64).clamp(0.0, 1.0);
+    let fill = if free_pct < 10.0 {
+        0x0000_30D8 // red
     } else if free_pct < 20.0 {
-        (0x0000_C0F0, 0x0000_0000) // yellow, black text
+        0x0000_C0F0 // yellow
     } else if free_pct < 30.0 {
-        (0x0030_B830, 0x00FF_FFFF) // green, white text
+        0x0030_B830 // green
     } else {
-        (0x0040_4040, 0x00E0_E0E0) // neutral dark, light text
-    };
-    let text = if free_gb < 10.0 {
-        format!("{}%", free_pct.round() as u32)
-    } else if free_gb < 100.0 {
-        format!("{}G", free_gb.round() as u32)
-    } else {
-        format!("{}G", free_gb.round() as u32)
+        0x00D8_7800 // blue (BGR ~ accent)
     };
     unsafe {
         let screen = GetDC(null_mut());
@@ -233,23 +226,20 @@ fn make_icon(free: u64, total: u64) -> HICON {
         let mut bits: *mut u32 = null_mut();
         let bmp = CreateDIBSection(dc, &bi, 3, &mut bits, null_mut(), 0);
         let old = SelectObject(dc, bmp);
-        let fb = CreateSolidBrush(bg);
-        let ob = SelectObject(dc, fb);
+        let bb = CreateSolidBrush(0x0028_2828);
+        let fb = CreateSolidBrush(fill);
+        let bp = CreatePen(0, 1, 0x00A0_A0A0);
+        let ob = SelectObject(dc, bb);
         Rectangle(dc, 0, 0, 16, 16);
-        let font = CreateFontW(
-            -9, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, wide("Arial").as_ptr(),
-        );
-        let of = SelectObject(dc, font);
-        SetTextColor(dc, fg);
-        SetBkMode(dc, 1); // TRANSPARENT
-        let tw = wide(&text);
-        let mut r = Rect { left: 0, top: 0, right: 16, bottom: 16 };
-        DrawTextW(dc, tw.as_ptr(), -1, &mut r, 0x25); // CENTER|VCENTER|SINGLELINE
-        SelectObject(dc, of);
-        DeleteObject(font);
+        let fill_h = (12.0 * used) as i32;
+        SelectObject(dc, fb);
+        Rectangle(dc, 2, 14 - fill_h, 14, 14);
+        SelectObject(dc, bp);
+        Rectangle(dc, 1, 1, 15, 15);
         SelectObject(dc, ob);
         SelectObject(dc, old);
-        let mask = CreateBitmap(16, 16, 1, 1, std::ptr::null());
+        let zero = [0u8; 64]; // all-zero mask = fully opaque icon
+        let mask = CreateBitmap(16, 16, 1, 1, zero.as_ptr() as *const c_void);
         let mut ii = IconInfo {
             icon: 1,
             x: 0,
@@ -261,6 +251,8 @@ fn make_icon(free: u64, total: u64) -> HICON {
         DeleteObject(mask);
         DeleteObject(bmp);
         DeleteObject(fb);
+        DeleteObject(bb);
+        DeleteObject(bp);
         DeleteDC(dc);
         ReleaseDC(null_mut(), screen);
         icon
