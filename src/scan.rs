@@ -11,6 +11,7 @@ use crate::{bar, disp, fmt_num, fmt_size};
 
 const TOP_FILES_PER_DIR: usize = 30;
 
+#[derive(Clone)]
 pub struct DirReport {
     pub path: PathBuf,
     pub own_bytes: u64,
@@ -77,6 +78,7 @@ pub struct ScanProgress {
     pub done: AtomicBool,
 }
 
+#[derive(Clone)]
 pub struct ScanData {
     pub root: PathBuf,
     pub dirs: HashMap<PathBuf, DirReport>,

@@ -77,9 +77,8 @@ pub(crate) fn delete_to_recycle(hwnd: HWND, paths: &[PathBuf]) {
     };
     let res = unsafe { SHFileOperationW(&mut op) };
     if res == 0 {
-        set_status(&format!("moved {} item(s) to recycle bin — rescanning", labels.len()));
-        let root = SHARED.lock().unwrap().last_root.clone();
-        start_scan(root);
+        set_status(&format!("moved {} item(s) to recycle bin", labels.len()));
+        apply_deletion(paths);
     } else {
         set_status(&format!("delete failed (shell error {res})"));
     }

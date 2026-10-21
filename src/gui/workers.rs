@@ -119,3 +119,61 @@ pub(crate) fn start_compact(selected: Vec<DiskInfo>) {
     });
 }
 
+
+/// Subtract deleted paths from cached scan data — instant UI update,
+/// no rescan. Sizes become approximate for dir deletion (descendants
+/// under removed dirs are dropped from the index too).
+pub(crate) fn apply_deletion(paths: &[PathBuf]) {
+    let (arc, main_hwnd, admin_hint) = {
+        let g = SHARED.lock().unwrap();
+        let Some(a) = g.data.clone() else { return };
+        (a, WNDS.lock().unwrap().main, !g.elevated)
+    };
+    let paths = paths.to_vec();
+    thread::spawn(move || {
+        let mut d = (*arc).clone();
+        for p in &paths {
+            let size = d.totals.get(p).copied().unwrap_or_else(|| {
+                d.global_files
+                    .iter()
+                    .find(|(_, f)| f == p)
+                    .map(|(s, _)| *s)
+                    .unwrap_or(0)
+            });
+            for anc in p.ancestors() {
+                if let Some(t) = d.totals.get_mut(anc) {
+                    *t = t.saturating_sub(size);
+                }
+            }
+            if let Some(parent) = p.parent() {
+                if let Some(rep) = d.dirs.get_mut(parent) {
+                    rep.subdirs.retain(|sd| sd != p);
+                }
+            }
+            let removed_files = d.dirs.get(p).map(|r| r.files).unwrap_or(1);
+            d.total_files = d.total_files.saturating_sub(removed_files);
+            d.root_total = d.root_total.saturating_sub(size);
+            // drop the entry and everything underneath it
+            d.totals.retain(|k, _| !k.starts_with(p));
+            d.dirs.retain(|k, _| !k.starts_with(p));
+            d.global_files.retain(|(_, f)| !f.starts_with(p));
+        }
+        let data = Arc::new(d);
+        let _ = scan::save_cache(&data, &cache_path(&data.root));
+        let tree = scan::render(&data, 4, 8, 25, 0.2, admin_hint).replace('\n', "\r\n");
+        {
+            let mut g = SHARED.lock().unwrap();
+            g.data = Some(data.clone());
+            g.result = Some(tree);
+            g.status = format!(
+                "{} — {} (index updated after delete)",
+                disp(&data.root),
+                fmt_size(data.root_total)
+            );
+        }
+        refresh_list();
+        unsafe {
+            SendMessageW(main_hwnd as HWND, WM_TIMER, TIMER_UI, 0);
+        }
+    });
+}
