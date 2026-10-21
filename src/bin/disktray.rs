@@ -105,6 +105,7 @@ const NIF_SHOWTIP: u32 = 0x80;
 const TPM_RIGHTBUTTON: u32 = 0x0002;
 const MF_STRING: u32 = 0;
 const ID_OPEN: usize = 1;
+const ID_OPEN_ADMIN: usize = 4;
 const ID_REFRESH: usize = 2;
 const ID_EXIT: usize = 3;
 
@@ -287,6 +288,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 GetCursorPos(&mut p);
                 let m = CreatePopupMenu();
                 AppendMenuW(m, MF_STRING, ID_OPEN, wide("Open diskhound").as_ptr());
+                AppendMenuW(m, MF_STRING, ID_OPEN_ADMIN, wide("Open as administrator").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
                 SetForegroundWindow(hwnd);
@@ -299,6 +301,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
             ID_OPEN => {
                 let exe = format!("{}\\diskhound.exe", exe_dir());
                 ShellExecuteW(hwnd, std::ptr::null(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
+                0
+            }
+            ID_OPEN_ADMIN => {
+                let exe = format!("{}\\diskhound.exe", exe_dir());
+                unsafe {
+                    ShellExecuteW(hwnd, wide("runas").as_ptr(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
+                }
                 0
             }
             ID_REFRESH => {
