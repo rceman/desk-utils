@@ -215,7 +215,7 @@ fn make_icon(free: u64, total: u64) -> HICON {
                 h: -16,
                 planes: 1,
                 bpp: 32,
-                compression: 3,
+                compression: 0, // BI_RGB
                 size_image: 0,
                 xppm: 0,
                 yppm: 0,
@@ -395,6 +395,10 @@ pub fn main() {
             balloon_icon: null_mut(),
         };
         Shell_NotifyIconW(NIM_ADD, &mut d);
+        // v4 -> WM_TRAY lParam carries the mouse message directly
+        d.flags = 0;
+        d.timeout_or_version = 4;
+        Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
         update_tray(hwnd);
 
