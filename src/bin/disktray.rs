@@ -196,14 +196,14 @@ fn c_space() -> Option<(u64, u64)> {
 fn make_icon(free: u64, total: u64) -> HICON {
     let free_pct = free as f64 / total.max(1) as f64 * 100.0;
     let used = (1.0 - free as f64 / total.max(1) as f64).clamp(0.0, 1.0);
-    let fill = if free_pct < 10.0 {
-        0x0000_30D8 // red
+    let fill: u32 = if free_pct < 10.0 {
+        0xFFD8_3030 // red
     } else if free_pct < 20.0 {
-        0x0000_C0F0 // yellow
+        0xFFF0_C000 // yellow
     } else if free_pct < 30.0 {
-        0x0030_B830 // green
+        0xFF30_B830 // green
     } else {
-        0x00D8_7800 // blue (BGR ~ accent)
+        0xFF00_78D8 // blue accent
     };
     unsafe {
         let screen = GetDC(null_mut());
@@ -226,26 +226,22 @@ fn make_icon(free: u64, total: u64) -> HICON {
         };
         let mut bits: *mut u32 = null_mut();
         let bmp = CreateDIBSection(dc, &bi, 3, &mut bits, null_mut(), 0);
-        let old = SelectObject(dc, bmp);
-        let bb = CreateSolidBrush(0x0028_2828);
-        let fb = CreateSolidBrush(fill);
-        let bp = CreatePen(0, 1, 0x00A0_A0A0);
-        let ob = SelectObject(dc, bb);
-        Rectangle(dc, 0, 0, 16, 16);
-        let fill_h = (12.0 * used) as i32;
-        SelectObject(dc, fb);
-        Rectangle(dc, 2, 14 - fill_h, 14, 14);
-        SelectObject(dc, bp);
-        Rectangle(dc, 1, 1, 15, 15);
-        SelectObject(dc, ob);
-        SelectObject(dc, old);
-        // GDI writes alpha=0 into 32bpp bitmaps -> force opaque
         if !bits.is_null() {
-            for i in 0..256isize {
-                *bits.offset(i) |= 0xFF00_0000;
+            let fill_h = (12.0 * used) as isize;
+            for y in 0..16isize {
+                for x in 0..16isize {
+                    let c: u32 = if x == 0 || y == 0 || x == 15 || y == 15 {
+                        0xFFA0_A0A0 // light-gray border
+                    } else if y >= 14 - fill_h && x >= 2 && x <= 13 {
+                        fill // status color, bottom-up = % used
+                    } else {
+                        0xFF28_2828 // dark bg
+                    };
+                    *bits.offset(y * 16 + x) = c;
+                }
             }
         }
-        let zero = [0u8; 64]; // all-zero mask = fully opaque icon
+        let zero = [0u8; 64];
         let mask = CreateBitmap(16, 16, 1, 1, zero.as_ptr() as *const c_void);
         let mut ii = IconInfo {
             icon: 1,
@@ -257,9 +253,6 @@ fn make_icon(free: u64, total: u64) -> HICON {
         let icon = CreateIconIndirect(&mut ii);
         DeleteObject(mask);
         DeleteObject(bmp);
-        DeleteObject(fb);
-        DeleteObject(bb);
-        DeleteObject(bp);
         DeleteDC(dc);
         ReleaseDC(null_mut(), screen);
         icon
