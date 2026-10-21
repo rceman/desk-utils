@@ -152,8 +152,24 @@ unsafe extern "system" {
     fn CreateIconIndirect(i: *mut IconInfo) -> HICON;
     fn DestroyIcon(i: HICON) -> i32;
 }
-#[link(name = "msimg32")]
-unsafe extern "system" {}
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn DrawTextW(d: HDC, t: *const u16, n: i32, r: *mut Rect, f: u32) -> i32;
+}
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    fn CreateFontW(h: i32, w: i32, e: i32, o: i32, wt: i32, i: u32, u: u32, s: u32, cs: u32, op: u32, cp: u32, q: u32, pf: u32, f: *const u16) -> *mut c_void;
+    fn SetTextColor(d: HDC, c: u32) -> u32;
+    fn SetBkMode(d: HDC, m: i32) -> i32;
+}
+
+#[repr(C)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -174,8 +190,27 @@ fn c_space() -> Option<(u64, u64)> {
     }
 }
 
-/// Draw a 16x16 icon: background + vertical fill = % used (green/orange/red).
-fn make_icon(used_frac: f64) -> HICON {
+/// 16x16 icon: colored background (red <10% free, yellow <20%, green <30%,
+/// neutral above) + free space text ("12G", or "5%" when very low).
+fn make_icon(free: u64, total: u64) -> HICON {
+    let free_pct = free as f64 / total.max(1) as f64 * 100.0;
+    let free_gb = free as f64 / 1_073_741_824.0;
+    let (bg, fg) = if free_pct < 10.0 {
+        (0x0000_30D8, 0x00FF_FFFF) // red, white text
+    } else if free_pct < 20.0 {
+        (0x0000_C0F0, 0x0000_0000) // yellow, black text
+    } else if free_pct < 30.0 {
+        (0x0030_B830, 0x00FF_FFFF) // green, white text
+    } else {
+        (0x0040_4040, 0x00E0_E0E0) // neutral dark, light text
+    };
+    let text = if free_gb < 10.0 {
+        format!("{}%", free_pct.round() as u32)
+    } else if free_gb < 100.0 {
+        format!("{}G", free_gb.round() as u32)
+    } else {
+        format!("{}G", free_gb.round() as u32)
+    };
     unsafe {
         let screen = GetDC(null_mut());
         let dc = CreateCompatibleDC(screen);
@@ -198,23 +233,20 @@ fn make_icon(used_frac: f64) -> HICON {
         let mut bits: *mut u32 = null_mut();
         let bmp = CreateDIBSection(dc, &bi, 3, &mut bits, null_mut(), 0);
         let old = SelectObject(dc, bmp);
-        let fill = if used_frac > 0.9 {
-            0x0000_30D8 // red (BGR)
-        } else if used_frac > 0.75 {
-            0x0000_90E0 // orange
-        } else {
-            0x0030_B830 // green
-        };
-        let fb = CreateSolidBrush(fill);
-        let bb = CreateSolidBrush(0x0020_2020);
-        let bp = CreatePen(0, 1, 0x00B0_B0B0);
-        let ob = SelectObject(dc, bb);
+        let fb = CreateSolidBrush(bg);
+        let ob = SelectObject(dc, fb);
         Rectangle(dc, 0, 0, 16, 16);
-        let used_px = (14.0 * used_frac.clamp(0.0, 1.0)) as i32;
-        SelectObject(dc, fb);
-        Rectangle(dc, 1, 16 - 1 - used_px, 15, 15);
-        SelectObject(dc, bp);
-        Rectangle(dc, 0, 0, 16, 16);
+        let font = CreateFontW(
+            -9, 0, 0, 0, 700, 0, 0, 0, 0, 0, 0, 0, 0, wide("Arial").as_ptr(),
+        );
+        let of = SelectObject(dc, font);
+        SetTextColor(dc, fg);
+        SetBkMode(dc, 1); // TRANSPARENT
+        let tw = wide(&text);
+        let mut r = Rect { left: 0, top: 0, right: 16, bottom: 16 };
+        DrawTextW(dc, tw.as_ptr(), -1, &mut r, 0x25); // CENTER|VCENTER|SINGLELINE
+        SelectObject(dc, of);
+        DeleteObject(font);
         SelectObject(dc, ob);
         SelectObject(dc, old);
         let mask = CreateBitmap(16, 16, 1, 1, std::ptr::null());
@@ -229,8 +261,6 @@ fn make_icon(used_frac: f64) -> HICON {
         DeleteObject(mask);
         DeleteObject(bmp);
         DeleteObject(fb);
-        DeleteObject(bb);
-        DeleteObject(bp);
         DeleteDC(dc);
         ReleaseDC(null_mut(), screen);
         icon
@@ -247,7 +277,7 @@ fn update_tray(hwnd: HWND) {
             uid: 1,
             flags: NIF_ICON | NIF_TIP,
             msg: WM_TRAY,
-            icon: make_icon(used),
+            icon: make_icon(free, total),
             tip: [0u16; 128],
             state: 0,
             state_mask: 0,
@@ -361,7 +391,7 @@ pub fn main() {
             uid: 1,
             flags: NIF_MESSAGE | NIF_ICON,
             msg: WM_TRAY,
-            icon: make_icon(0.0),
+            icon: make_icon(1, 1),
             tip: [0u16; 128],
             state: 0,
             state_mask: 0,
