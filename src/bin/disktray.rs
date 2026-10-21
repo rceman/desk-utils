@@ -127,6 +127,8 @@ unsafe extern "system" {
     fn GetCursorPos(p: *mut Point) -> i32;
     fn SetForegroundWindow(h: HWND) -> i32;
     fn GetDC(h: HWND) -> HDC;
+    fn LoadImageW(i: *mut c_void, n: *const u16, t: u32, w: i32, h: i32, f: u32) -> HICON;
+    fn GetModuleFileNameW(m: *mut c_void, b: *mut u16, n: u32) -> u32;
     fn ReleaseDC(h: HWND, d: HDC) -> i32;
     fn MessageBoxW(h: HWND, t: *const u16, c: *const u16, f: u32) -> i32;
 }
@@ -176,6 +178,17 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+fn tlog(s: String) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(r"C:\Tools\diskhound\disktray.log")
+    {
+        let _ = writeln!(f, "{}", s);
+    }
+}
+
 fn fmt_gb(b: u64) -> String {
     format!("{:.1}", b as f64 / 1_073_741_824.0)
 }
@@ -191,76 +204,45 @@ fn c_space() -> Option<(u64, u64)> {
     }
 }
 
-/// 16x16 icon: system-monitor style — framed box, fill from bottom = % used.
-/// Fill color by free space: red <10%, yellow <20%, green <30%, blue above.
+fn exe_dir() -> String {
+    let mut buf = [0u16; 600];
+    let n = unsafe { GetModuleFileNameW(std::ptr::null_mut(), buf.as_mut_ptr(), 600) };
+    let p = String::from_utf16_lossy(&buf[..n as usize]);
+    std::path::Path::new(&p)
+        .parent()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+/// load tray-<color>.ico from exe dir; color by free space thresholds
 fn make_icon(free: u64, total: u64) -> HICON {
     let free_pct = free as f64 / total.max(1) as f64 * 100.0;
-    let used = (1.0 - free as f64 / total.max(1) as f64).clamp(0.0, 1.0);
-    let fill: u32 = if free_pct < 10.0 {
-        0xFFD8_3030 // red
+    let name = if free_pct < 10.0 {
+        "tray-red.ico"
     } else if free_pct < 20.0 {
-        0xFFF0_C000 // yellow
+        "tray-yellow.ico"
     } else if free_pct < 30.0 {
-        0xFF30_B830 // green
+        "tray-green.ico"
     } else {
-        0xFF00_78D8 // blue accent
+        "tray-blue.ico"
     };
-    unsafe {
-        let screen = GetDC(null_mut());
-        let dc = CreateCompatibleDC(screen);
-        let bi = BitmapInfo {
-            hdr: BitmapInfoHeader {
-                size: 40,
-                w: 16,
-                h: -16,
-                planes: 1,
-                bpp: 32,
-                compression: 0, // BI_RGB
-                size_image: 0,
-                xppm: 0,
-                yppm: 0,
-                clr_used: 0,
-                clr_important: 0,
-            },
-            colors: [0x00FF_0000, 0x0000_FF00, 0x0000_00FF],
-        };
-        let mut bits: *mut u32 = null_mut();
-        let bmp = CreateDIBSection(dc, &bi, 3, &mut bits, null_mut(), 0);
-        if !bits.is_null() {
-            let fill_h = (12.0 * used) as isize;
-            for y in 0..16isize {
-                for x in 0..16isize {
-                    let c: u32 = if x == 0 || y == 0 || x == 15 || y == 15 {
-                        0xFFA0_A0A0 // light-gray border
-                    } else if y >= 14 - fill_h && x >= 2 && x <= 13 {
-                        fill // status color, bottom-up = % used
-                    } else {
-                        0xFF28_2828 // dark bg
-                    };
-                    *bits.offset(y * 16 + x) = c;
-                }
-            }
-        }
-        let zero = [0u8; 64];
-        let mask = CreateBitmap(16, 16, 1, 1, zero.as_ptr() as *const c_void);
-        let mut ii = IconInfo {
-            icon: 1,
-            x: 0,
-            y: 0,
-            mask,
-            color: bmp,
-        };
-        let icon = CreateIconIndirect(&mut ii);
-        DeleteObject(mask);
-        DeleteObject(bmp);
-        DeleteDC(dc);
-        ReleaseDC(null_mut(), screen);
-        icon
-    }
+    let path = format!("{}\\{}", exe_dir(), name);
+    let icon = unsafe {
+        LoadImageW(
+            null_mut(),
+            wide(&path).as_ptr(),
+            1,      // IMAGE_ICON
+            16, 16, 0x10, // LR_LOADFROMFILE
+        )
+    };
+    tlog(format!("icon {} -> {:#x}", path, icon as usize));
+    icon
 }
 
 fn update_tray(hwnd: HWND) {
-    if let Some((free, total)) = c_space() {
+    let cs = c_space();
+    tlog(format!("c_space -> {:?}", cs));
+    if let Some((free, total)) = cs {
         let used = 1.0 - free as f64 / total.max(1) as f64;
         let tip = format!("C: {} GB free of {} GB ({:.0}% used)", fmt_gb(free), fmt_gb(total), used * 100.0);
         let mut d = NotifyIconData {
@@ -284,7 +266,9 @@ fn update_tray(hwnd: HWND) {
             d.tip[i] = c;
         }
         unsafe {
-            Shell_NotifyIconW(NIM_MODIFY, &mut d);
+            let icon_ok = d.icon as usize;
+            let r = Shell_NotifyIconW(NIM_MODIFY, &mut d);
+            tlog(format!("NIM_MODIFY icon={:#x} ret={}", icon_ok, r));
             if d.icon as usize != 0 {
                 DestroyIcon(d.icon);
             }
