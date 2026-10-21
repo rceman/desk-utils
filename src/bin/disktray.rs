@@ -283,7 +283,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
             0
         }
         WM_TRAY => {
-            if l == WM_RBUTTONUP as isize {
+            // v4: lParam = (uID << 16) | mouse event
+            let ev = (l & 0xFFFF) as u32;
+            if ev == WM_RBUTTONUP {
                 let mut p = Point { x: 0, y: 0 };
                 GetCursorPos(&mut p);
                 let m = CreatePopupMenu();
@@ -365,10 +367,16 @@ pub fn main() {
             cb_size: std::mem::size_of::<NotifyIconData>() as u32,
             hwnd,
             uid: 1,
-            flags: NIF_MESSAGE | NIF_ICON,
+            flags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
             msg: WM_TRAY,
             icon: make_icon(1, 1),
-            tip: [0u16; 128],
+            tip: {
+                let mut t = [0u16; 128];
+                for (i, c) in "diskhound C:\\".encode_utf16().enumerate() {
+                    t[i] = c;
+                }
+                t
+            },
             state: 0,
             state_mask: 0,
             info: [0u16; 256],
