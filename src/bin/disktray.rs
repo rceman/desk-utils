@@ -207,29 +207,13 @@ fn exe_dir() -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
-/// load tray-<color>.ico from exe dir; color by free space thresholds
+/// load tray-<free%>.ico (pre-generated number icons in exe dir)
 fn make_icon(free: u64, total: u64) -> HICON {
-    let free_pct = free as f64 / total.max(1) as f64 * 100.0;
-    let name = if free_pct < 10.0 {
-        "tray-red.ico"
-    } else if free_pct < 20.0 {
-        "tray-yellow.ico"
-    } else if free_pct < 30.0 {
-        "tray-green.ico"
-    } else {
-        "tray-blue.ico"
-    };
-    let path = format!("{}\\{}", exe_dir(), name);
-    let icon = unsafe {
-        LoadImageW(
-            null_mut(),
-            wide(&path).as_ptr(),
-            1,      // IMAGE_ICON
-            16, 16, 0x10, // LR_LOADFROMFILE
-        )
-    };
-
-    icon
+    let pct = (free as f64 / total.max(1) as f64 * 100.0).round().clamp(0.0, 100.0) as u32;
+    let path = format!("{}\\tray-{}.ico", exe_dir(), pct);
+    unsafe {
+        LoadImageW(null_mut(), wide(&path).as_ptr(), 1, 16, 16, 0x10)
+    }
 }
 
 fn update_tray(hwnd: HWND) {
