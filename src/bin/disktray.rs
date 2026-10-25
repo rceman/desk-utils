@@ -302,17 +302,16 @@ fn exe_dir() -> String {
 
 /// live bar-chart icon: 4 bars (CPU/RAM/GPU/C:) drawn pixel-wise
 fn make_icon(free: u64, total: u64) -> HICON {
-    use std::sync::atomic::Ordering::Relaxed;
     let pct = (free as f64 / total.max(1) as f64 * 100.0).round().clamp(0.0, 100.0) as u32;
-    let cpu = CPU_PCT.load(Relaxed);
-    let ram = RAM_PCT.load(Relaxed);
-    let gpu = GPU_PCT.load(Relaxed).max(0) as u32;
-    let disk_col = if pct < 20 { 0xFF00_8CFF } else { 0xFF5A_A6C8 }; // BGRA
+    // staircase: 4 ascending bars; lit count = free% level
+    // lit = white (orange if <20%), unlit = gray
+    let lit = ((100 - pct) / 25).min(4) as usize; // used% -> steps
+    let (lc, uc) = if pct < 20 { (0xFF00_8CFFu32, 0xFF60_6060) } else { (0xFFFF_FFFF, 0xFF60_6060) };
     let bars = [
-        (cpu.min(100), 0xFFD8_7800u32),  // blue
-        (ram.min(100), 0xFF30_B830u32),  // green
-        (gpu.min(100), 0xFFDC_50C8u32),  // purple
-        (pct, disk_col),                  // disk
+        (4u32, if lit >= 1 { lc } else { uc }),
+        (7u32, if lit >= 2 { lc } else { uc }),
+        (10u32, if lit >= 3 { lc } else { uc }),
+        (13u32, if lit >= 4 { lc } else { uc }),
     ];
     unsafe {
         let bi = BitmapInfo {
@@ -338,7 +337,7 @@ fn make_icon(free: u64, total: u64) -> HICON {
             }
             // 4 bars, evenly spread across the frame (x = 2,5,8,11 + 3px wide)
             for (i, (v, col)) in bars.iter().enumerate() {
-                let bh = (*v * 14 / 100).clamp(1, 14) as usize;
+                let bh = *v as usize;
                 let x0 = 2 + i * 3;
                 for y in (15 - bh)..15 {
                     for x in x0..(x0 + 2) {
