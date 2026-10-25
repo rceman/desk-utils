@@ -710,11 +710,6 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             EndPaint(hwnd, &ps);
             0
         }
-        WM_LBUTTONUP => {
-            let exe = format!("{}\\diskhound.exe", exe_dir());
-            ShellExecuteW(hwnd, std::ptr::null(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
-            0
-        }
         _ => DefWindowProcW(hwnd, msg, w, l),
     }
 }
@@ -916,13 +911,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
         WM_TRAY => {
             // v4: lParam = (uID << 16) | mouse event
             let ev = (l & 0xFFFF) as u32;
-            if ev == 0x0202 {
-                // left click -> open diskhound
-                let exe = format!("{}\\diskhound.exe", exe_dir());
-                unsafe {
-                    ShellExecuteW(hwnd, std::ptr::null(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
-                }
-            }
             if ev == WM_RBUTTONUP {
                 let mut p = Point { x: 0, y: 0 };
                 GetCursorPos(&mut p);
