@@ -545,8 +545,8 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
                 ("GPU", gtxt, if gpu >= 80 { warn } else { white }),
-                ("C:", format!("{}%", pct), if pct < 20 { warn } else { white }),
-                ("W:", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
+                ("C:/", format!("{}%", pct), if pct < 20 { warn } else { white }),
+                ("W:/", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
