@@ -216,6 +216,7 @@ unsafe extern "system" {
     fn SetWindowTextW(h: HWND, t: *const u16) -> i32;
     fn GetDlgItem(h: HWND, id: i32) -> HWND;
     fn SendMessageW(h: HWND, m: u32, w: usize, l: isize) -> isize;
+    fn SetWindowPos(h: HWND, ins: isize, x: i32, y: i32, w: i32, hh: i32, f: u32) -> i32;
 }
 #[link(name = "shell32")]
 unsafe extern "system" {
@@ -344,8 +345,9 @@ fn park_widget() {
     }
     if let Some((x, y, w, h)) = widget_rect() {
         unsafe {
-            MoveWindow(hw, x, y, w, h, 1);
-            ShowWindow(hw, SW_SHOWNA);
+            // re-assert TOPMOST every call: the taskbar raises itself above
+            // our window on clicks (SWP_NOACTIVATE|SWP_SHOWWINDOW)
+            SetWindowPos(hw, -1, x, y, w, h, 0x10 | 0x40);
             InvalidateRect(hw, std::ptr::null(), 1);
         }
     }
@@ -705,6 +707,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
         WM_TIMER => {
             if w == 2 {
                 collect_metrics();
+                park_widget();
                 let wh = WIDGET_HWND.load(std::sync::atomic::Ordering::Relaxed) as HWND;
                 if !wh.is_null() {
                     unsafe { InvalidateRect(wh, std::ptr::null(), 0) };
