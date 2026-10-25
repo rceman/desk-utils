@@ -539,40 +539,32 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let dim = 0x00A0_A0A0u32;
             let warn = 0x0000_8CFFu32; // orange (BGR)
             let white = 0x00FF_FFFFu32;
-            let top = [
-                ("CPU".to_string(), dim),
-                ("RAM".to_string(), dim),
-                ("GPU".to_string(), dim),
+            // 5 cols: CPU RAM GPU | C: W: — values aligned on one row
+            let sep = 6i32;
+            let mw = (w * 3 / 5) / 3; // metric col width (~3/5 of w, 3 cols)
+            let dw = (w - 3 * mw - sep) / 2; // disk col width
+            let cells: [(i32, &str, String, u32); 5] = [
+                (0, "CPU", format!("{}%", cpu), white),
+                (mw, "RAM", format!("{}%", ram), white),
+                (mw * 2, "GPU", gtxt, white),
+                (mw * 3 + sep, "C:", format!("{}%", pct), if pct < 20 { warn } else { white }),
+                (mw * 3 + sep + dw, "W:", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
+                 if wp < 0 { dim } else if wp < 20 { warn } else { white }),
             ];
-            let bot = [
-                (format!("{}%", cpu), white),
-                (format!("{}%", ram), white),
-                (gtxt, white),
-            ];
-            // metric cols 0-2 share 63%, disk col gets the rest (wider for "C: NN%")
-            let cw = w * 21 / 100;
-            for c in 0..3usize {
-                let x0 = c as i32 * cw;
-                let mut rt = Rect { left: x0, top: 0, right: x0 + cw, bottom: rows_h / 2 };
-                let mut rb = Rect { left: x0, top: rows_h / 2, right: x0 + cw, bottom: rows_h };
-                SetTextColor(dc, top[c].1);
-                DrawTextW(dc, wide(&top[c].0).as_ptr(), -1, &mut rt, 0x25);
-                SetTextColor(dc, bot[c].1);
-                DrawTextW(dc, wide(&bot[c].0).as_ptr(), -1, &mut rb, 0x25);
-            }
-            // disk column: label gray (left) + value colored (right)
-            let dx0 = 3 * cw;
-            for (y0, y1, lbl, val, col) in [
-                (0, rows_h / 2, "C:", format!("{}%", pct), if pct < 20 { warn } else { white }),
-                (rows_h / 2, rows_h, "W:", if wp >= 0 { format!("{}%", wp) } else { "—".into() }, if wp < 0 { dim } else if wp < 20 { warn } else { white }),
-            ] {
-                let mut rl = Rect { left: dx0, top: y0, right: dx0 + 24, bottom: y1 };
-                let mut rv = Rect { left: dx0 + 24, top: y0, right: w - 2, bottom: y1 };
+            for (i, (x0, lbl, val, col)) in cells.iter().enumerate() {
+                let x1 = if i < 3 { x0 + mw } else if i == 4 { w } else { x0 + dw };
+                let mut rt = Rect { left: *x0, top: 0, right: x1, bottom: rows_h / 2 };
+                let mut rb = Rect { left: *x0, top: rows_h / 2, right: x1, bottom: rows_h };
                 SetTextColor(dc, dim);
-                DrawTextW(dc, wide(lbl).as_ptr(), -1, &mut rl, 0x24); // left|vcenter
-                SetTextColor(dc, col);
-                DrawTextW(dc, wide(&val).as_ptr(), -1, &mut rv, 0x22); // right|vcenter
+                DrawTextW(dc, wide(lbl).as_ptr(), -1, &mut rt, 0x25);
+                SetTextColor(dc, *col);
+                DrawTextW(dc, wide(val).as_ptr(), -1, &mut rb, 0x25);
             }
+            // vertical separator after GPU
+            let sb = CreateSolidBrush(0x0060_6060);
+            let sr = Rect { left: 3 * mw + 2, top: 3, right: 3 * mw + 3, bottom: h - 3 };
+            FillRect(dc, &sr, sb);
+            DeleteObject(sb);
             SelectObject(dc, old);
             DeleteObject(font);
             EndPaint(hwnd, &ps);
