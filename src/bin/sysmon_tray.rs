@@ -410,6 +410,18 @@ fn park_widget() {
     }
 }
 
+fn raise_widget() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let hw = WIDGET_HWND.load(Relaxed) as HWND;
+    if hw.is_null() || !WIDGET_ON.load(Relaxed) {
+        return;
+    }
+    unsafe {
+        // SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE
+        SetWindowPos(hw, -1, 0, 0, 0, 0, 0x1 | 0x2 | 0x10);
+    }
+}
+
 fn ft_u64(f: &FileTime) -> u64 {
     ((f.hi as u64) << 32) | f.lo as u64
 }
@@ -895,7 +907,9 @@ fn update_tray(hwnd: HWND) {
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
     match msg {
         WM_TIMER => {
-            if w == 2 {
+            if w == 3 {
+                raise_widget();
+            } else if w == 2 {
                 collect_metrics();
                 update_tray(hwnd);
                 park_widget();
@@ -1073,6 +1087,7 @@ pub fn main() {
         Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
         SetTimer(hwnd, 2, 500, 0);
+        SetTimer(hwnd, 3, 150, 0);
         load_settings();
         init_pdh();
         init_nvml();
