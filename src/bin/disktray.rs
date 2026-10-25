@@ -578,7 +578,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let fh = -(((h - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
             let font = CreateFontW(
                 fh, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0,
-                wide("Segoe UI").as_ptr(),
+                wide("Consolas").as_ptr(),
             );
             let old = SelectObject(dc, font);
             let rows_h = h;
