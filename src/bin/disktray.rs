@@ -127,7 +127,7 @@ static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::ne
 // widget tuning (persisted to disktray.ini)
 static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(200);
 static W_XOFF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(45);
+static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(60);
 static W_BARH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(3);
 // live metrics
 static CPU_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -488,17 +488,19 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let rows_h = h;
             let cw = w / 4;
             let dim = 0x00A0_A0A0u32;
+            let warn = 0x0000_8CFFu32; // orange (BGR)
+            let white = 0x00FF_FFFFu32;
             let top = [
                 ("CPU".to_string(), dim),
                 ("RAM".to_string(), dim),
                 ("GPU".to_string(), dim),
-                (format!("C: {}%", pct), pct_color(pct)),
+                (format!("C: {}%", pct), if pct < 20 { warn } else { dim }),
             ];
             let bot = [
-                (format!("{}%", cpu), 0x00FF_FFFF),
-                (format!("{}%", ram), 0x00FF_FFFF),
-                (gtxt, 0x00FF_FFFF),
-                (wtxt, if wp >= 0 { pct_color(wp as u32) } else { dim }),
+                (format!("{}%", cpu), white),
+                (format!("{}%", ram), white),
+                (gtxt, white),
+                (wtxt, if wp < 0 { dim } else if wp < 20 { warn } else { white }),
             ];
             for c in 0..4usize {
                 let x0 = c as i32 * cw;
