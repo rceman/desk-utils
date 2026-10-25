@@ -125,7 +125,7 @@ static WIDGET_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 static CFG_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 // widget tuning (persisted to disktray.ini)
-static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(200);
+static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(240);
 static W_XOFF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(60);
 static W_BARH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(3);
@@ -584,22 +584,23 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let dim = 0x00A0_A0A0u32;
             let warn = 0x0000_8CFFu32; // orange (BGR)
             let white = 0x00FF_FFFFu32;
-            // 6 cols + separator before temps: CPU RAM GPU | TMP C: W:
+            // usage first, separator, then temps: CPU RAM GPU C:/ W:/ | C° G°
             let sep = 4i32;
-            let cw = (w - sep) / 6;
-            let cells: [(&str, String, u32); 6] = [
+            let cw = (w - sep) / 7;
+            let cells: [(&str, String, u32); 7] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
                 ("GPU", gtxt, if gpu >= 80 { warn } else { white }),
-                ("TMP", ttxt, white),
                 ("C:/", format!("{}%", pct), if pct < 20 { warn } else { white }),
                 ("W:/", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
+                ("C°", "—".into(), white),   // CPU temp: needs LHM running
+                ("G°", ttxt, white),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
-                let shift = if i >= 3 { sep } else { 0 };
+                let shift = if i >= 5 { sep } else { 0 };
                 let x0 = i as i32 * cw + shift;
-                let x1 = if i == 5 { w } else { x0 + cw };
+                let x1 = if i == 6 { w } else { x0 + cw };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
                 let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
                 SetTextColor(dc, dim);
@@ -608,7 +609,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 DrawTextW(dc, wide(val).as_ptr(), -1, &mut rb, 0x25);
             }
             let sb = CreateSolidBrush(0x0060_6060);
-            let sr = Rect { left: 3 * cw + 1, top: 3, right: 3 * cw + 2, bottom: h - 3 };
+            let sr = Rect { left: 5 * cw + 1, top: 3, right: 5 * cw + 2, bottom: h - 3 };
             FillRect(dc, &sr, sb);
             DeleteObject(sb);
             SelectObject(dc, old);
