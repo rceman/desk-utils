@@ -585,7 +585,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let warn = 0x0000_8CFFu32; // orange (BGR)
             let white = 0x00FF_FFFFu32;
             // usage first, separator, then temps: CPU RAM GPU C:/ W:/ | C° G°
-            let sep = 4i32;
+            let sep = 8i32;
             let cw = (w - sep) / 7;
             let cells: [(&str, String, u32); 7] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
@@ -609,7 +609,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 DrawTextW(dc, wide(val).as_ptr(), -1, &mut rb, 0x25);
             }
             let sb = CreateSolidBrush(0x0060_6060);
-            let sr = Rect { left: 5 * cw + 1, top: 3, right: 5 * cw + 2, bottom: h - 3 };
+            let sr = Rect { left: 5 * cw + 4, top: 3, right: 5 * cw + 5, bottom: h - 3 };
             FillRect(dc, &sr, sb);
             DeleteObject(sb);
             SelectObject(dc, old);
