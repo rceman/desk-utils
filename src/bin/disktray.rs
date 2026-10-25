@@ -104,10 +104,35 @@ const NIF_MESSAGE: u32 = 1;
 const NIF_SHOWTIP: u32 = 0x80;
 const TPM_RIGHTBUTTON: u32 = 0x0002;
 const MF_STRING: u32 = 0;
+const MF_CHECKED: u32 = 8;
 const ID_OPEN: usize = 1;
 const ID_OPEN_ADMIN: usize = 4;
 const ID_REFRESH: usize = 2;
 const ID_EXIT: usize = 3;
+const ID_WIDGET: usize = 5;
+const WS_POPUP: u32 = 0x8000_0000;
+const WS_VISIBLE: u32 = 0x1000_0000;
+const WS_EX_TOPMOST: u32 = 0x8;
+const WS_EX_TOOLWINDOW: u32 = 0x80;
+const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+const SW_HIDE: i32 = 0;
+const SW_SHOWNA: i32 = 8;
+const WM_PAINT: u32 = 0x000F;
+const WM_LBUTTONUP: u32 = 0x0202;
+
+static WIDGET_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static WIDGET_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[repr(C)]
+struct PaintStruct {
+    hdc: HDC,
+    erase: i32,
+    rc: Rect,
+    restore: i32,
+    inc_update: i32,
+    reserved: [u8; 32],
+}
 
 #[link(name = "user32")]
 unsafe extern "system" {
@@ -133,6 +158,15 @@ unsafe extern "system" {
     fn GetModuleFileNameW(m: *mut c_void, b: *mut u16, n: u32) -> u32;
     fn ReleaseDC(h: HWND, d: HDC) -> i32;
     fn MessageBoxW(h: HWND, t: *const u16, c: *const u16, f: u32) -> i32;
+    fn FindWindowW(c: *const u16, n: *const u16) -> HWND;
+    fn FindWindowExW(p: HWND, ch: HWND, c: *const u16, n: *const u16) -> HWND;
+    fn GetWindowRect(h: HWND, r: *mut Rect) -> i32;
+    fn MoveWindow(h: HWND, x: i32, y: i32, w: i32, hh: i32, r: i32) -> i32;
+    fn ShowWindow(h: HWND, c: i32) -> i32;
+    fn InvalidateRect(h: HWND, r: *const Rect, e: i32) -> i32;
+    fn BeginPaint(h: HWND, p: *mut PaintStruct) -> HDC;
+    fn EndPaint(h: HWND, p: *const PaintStruct) -> i32;
+    fn FillRect(d: HDC, r: *const Rect, b: HBRUSH) -> i32;
 }
 #[link(name = "shell32")]
 unsafe extern "system" {
@@ -216,10 +250,104 @@ fn make_icon(free: u64, total: u64) -> HICON {
     }
 }
 
+// ---- taskbar widget: small window parked left of TrayNotifyWnd ----
+
+fn widget_rect() -> Option<(i32, i32, i32, i32)> {
+    unsafe {
+        let tray = FindWindowW(wide("Shell_TrayWnd").as_ptr(), std::ptr::null());
+        if tray.is_null() {
+            return None;
+        }
+        let notify = FindWindowExW(tray, null_mut(), wide("TrayNotifyWnd").as_ptr(), std::ptr::null());
+        if notify.is_null() {
+            return None;
+        }
+        let mut r = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+        if GetWindowRect(notify, &mut r) == 0 {
+            return None;
+        }
+        let w = 110; // wide enough for "NN%" + bar
+        Some((r.left - w, r.top, w, r.bottom - r.top))
+    }
+}
+
+fn park_widget() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let hw = WIDGET_HWND.load(Relaxed) as HWND;
+    if hw.is_null() {
+        return;
+    }
+    if !WIDGET_ON.load(Relaxed) {
+        unsafe { ShowWindow(hw, SW_HIDE) };
+        return;
+    }
+    if let Some((x, y, w, h)) = widget_rect() {
+        unsafe {
+            MoveWindow(hw, x, y, w, h, 1);
+            ShowWindow(hw, SW_SHOWNA);
+            InvalidateRect(hw, std::ptr::null(), 1);
+        }
+    }
+}
+
+fn pct_color(pct: u32) -> u32 {
+    // BGR
+    if pct < 10 { 0x0030_30D8 }        // red
+    else if pct < 20 { 0x003A_A6CA }   // muted yellow
+    else if pct < 30 { 0x0030_B830 }   // green
+    else { 0x00D8_7800 }               // blue
+}
+
+unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
+    match msg {
+        WM_PAINT => {
+            let mut ps = PaintStruct {
+                hdc: null_mut(), erase: 0,
+                rc: Rect { left: 0, top: 0, right: 0, bottom: 0 },
+                restore: 0, inc_update: 0, reserved: [0; 32],
+            };
+            let dc = BeginPaint(hwnd, &mut ps);
+            let mut rc = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+            GetWindowRect(hwnd, &mut rc);
+            let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+            // bg ~ taskbar dark
+            let bg = CreateSolidBrush(0x0023_2323);
+            let all = Rect { left: 0, top: 0, right: w, bottom: h };
+            FillRect(dc, &all, bg);
+            DeleteObject(bg);
+            let pct = LAST_PCT.load(std::sync::atomic::Ordering::Relaxed);
+            // fill bar: bottom strip, width = pct% of w
+            let bar = CreateSolidBrush(pct_color(pct));
+            let br = Rect { left: 4, top: h - 7, right: 4 + ((w - 8) * pct as i32 / 100), bottom: h - 3 };
+            FillRect(dc, &br, bar);
+            DeleteObject(bar);
+            // text "NN% free"
+            let txt = format!("{}%  free", pct);
+            SetBkMode(dc, 1); // TRANSPARENT
+            SetTextColor(dc, 0x00FF_FFFF);
+            let tr = Rect { left: 0, top: 2, right: w, bottom: h - 8 };
+            DrawTextW(dc, wide(&txt).as_ptr(), -1, &tr as *const _ as *mut Rect, 0x25); // DT_CENTER|SINGLELINE|VCENTER
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_LBUTTONUP => {
+            let exe = format!("{}\\diskhound.exe", exe_dir());
+            ShellExecuteW(hwnd, std::ptr::null(), wide(&exe).as_ptr(), std::ptr::null(), std::ptr::null(), 5);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
 fn update_tray(hwnd: HWND) {
     let cs = c_space();
 
     if let Some((free, total)) = cs {
+        LAST_PCT.store(
+            (free as f64 / total.max(1) as f64 * 100.0).round().clamp(0.0, 100.0) as u32,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        park_widget();
         let used = 1.0 - free as f64 / total.max(1) as f64;
         let tip = format!("C: {} GB free of {} GB ({:.0}% used)", fmt_gb(free), fmt_gb(total), used * 100.0);
         let mut d = NotifyIconData {
@@ -274,6 +402,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 AppendMenuW(m, MF_STRING, ID_OPEN, wide("Open diskhound").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_OPEN_ADMIN, wide("Open as administrator").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
+                let wf = if WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed) { MF_CHECKED } else { 0 };
+                AppendMenuW(m, wf, ID_WIDGET, wide("Taskbar widget").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
                 SetForegroundWindow(hwnd);
                 TrackPopupMenu(m, TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, std::ptr::null());
@@ -296,6 +426,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
             }
             ID_REFRESH => {
                 update_tray(hwnd);
+                0
+            }
+            ID_WIDGET => {
+                let cur = WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed);
+                WIDGET_ON.store(!cur, std::sync::atomic::Ordering::Relaxed);
+                park_widget();
                 0
             }
             ID_EXIT => {
@@ -360,6 +496,32 @@ pub fn main() {
         }
         // hidden message window
         let hwnd = CreateWindowExW(0, class.as_ptr(), wide("disktray").as_ptr(), 0, 0, 0, 0, 0, null_mut(), null_mut(), inst, null_mut());
+        // taskbar widget window class + instance
+        let wclass = wide("disktray_widget");
+        let wwc = WndClassEx {
+            cb_size: std::mem::size_of::<WndClassEx>() as u32,
+            style: 0,
+            wnd_proc: widget_proc as usize,
+            cls_extra: 0,
+            wnd_extra: 0,
+            inst,
+            icon: null_mut(),
+            cursor: LoadCursorW(null_mut(), 32512),
+            hbr_background: null_mut(),
+            menu_name: std::ptr::null(),
+            class_name: wclass.as_ptr(),
+            icon_sm: null_mut(),
+        };
+        RegisterClassExW(&wwc);
+        let wh = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            wclass.as_ptr(),
+            wide("").as_ptr(),
+            WS_POPUP,
+            0, 0, 0, 0,
+            null_mut(), null_mut(), inst, null_mut(),
+        );
+        WIDGET_HWND.store(wh as usize, std::sync::atomic::Ordering::Relaxed);
         let mut d = NotifyIconData {
             cb_size: std::mem::size_of::<NotifyIconData>() as u32,
             hwnd,
