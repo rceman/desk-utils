@@ -300,11 +300,53 @@ fn exe_dir() -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
-/// load tray-<free%>.ico (pre-generated number icons in exe dir)
+/// live bar-chart icon: 4 bars (CPU/RAM/GPU/C:) drawn pixel-wise
 fn make_icon(free: u64, total: u64) -> HICON {
+    use std::sync::atomic::Ordering::Relaxed;
     let pct = (free as f64 / total.max(1) as f64 * 100.0).round().clamp(0.0, 100.0) as u32;
-    let path = format!("{}\\tray-{}.ico", exe_dir(), pct);
+    let cpu = CPU_PCT.load(Relaxed);
+    let ram = RAM_PCT.load(Relaxed);
+    let gpu = GPU_PCT.load(Relaxed).max(0) as u32;
+    let disk_col = if pct < 20 { 0xFF00_8CFF } else { 0xFF5A_A6C8 }; // BGRA
+    let bars = [
+        (cpu.min(100), 0xFFD8_7800u32),  // blue
+        (ram.min(100), 0xFF30_B830u32),  // green
+        (gpu.min(100), 0xFFDC_50C8u32),  // purple
+        (pct, disk_col),                  // disk
+    ];
     unsafe {
+        let bi = BitmapInfo {
+            hdr: BitmapInfoHeader {
+                size: std::mem::size_of::<BitmapInfoHeader>() as u32,
+                w: 16, h: -16, // top-down
+                planes: 1, bpp: 32, compression: 0,
+                size_image: 0, xppm: 0, yppm: 0, clr_used: 0, clr_important: 0,
+            },
+            colors: [0; 3],
+        };
+        let mut bits: *mut u32 = null_mut();
+        let bmp = CreateDIBSection(null_mut(), &bi, 0, &mut bits, null_mut(), 0);
+        if !bmp.is_null() && !bits.is_null() {
+            let px = std::slice::from_raw_parts_mut(bits, 256);
+            for p in px.iter_mut() { *p = 0xFF20_2020; } // dark bg
+            for (i, (v, col)) in bars.iter().enumerate() {
+                let bh = (*v * 16 / 100) as usize;
+                for y in (16 - bh)..16 {
+                    for x in (i * 4)..(i * 4 + 3) {
+                        px[y * 16 + x] = *col;
+                    }
+                }
+            }
+            let zero = [0u8; 64];
+            let mask = CreateBitmap(16, 16, 1, 1, zero.as_ptr() as *const c_void);
+            let mut ii = IconInfo { icon: 1, x: 0, y: 0, mask, color: bmp };
+            let h = CreateIconIndirect(&mut ii);
+            DeleteObject(mask); DeleteObject(bmp);
+            if !h.is_null() { return h; }
+        }
+        if !bmp.is_null() { DeleteObject(bmp); }
+        // fallback: pre-generated percent icon
+        let path = format!("{}\\tray-{}.ico", exe_dir(), pct);
         LoadImageW(null_mut(), wide(&path).as_ptr(), 1, 16, 16, 0x10)
     }
 }
@@ -709,6 +751,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
         WM_TIMER => {
             if w == 2 {
                 collect_metrics();
+                update_tray(hwnd);
                 park_widget();
                 let wh = WIDGET_HWND.load(std::sync::atomic::Ordering::Relaxed) as HWND;
                 if !wh.is_null() {
