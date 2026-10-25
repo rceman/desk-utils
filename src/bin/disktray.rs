@@ -321,12 +321,20 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let br = Rect { left: 4, top: h - 7, right: 4 + ((w - 8) * pct as i32 / 100), bottom: h - 3 };
             FillRect(dc, &br, bar);
             DeleteObject(bar);
-            // text "NN% free"
+            // text "NN% free" — font height scales with taskbar height (= DPI-aware)
             let txt = format!("{}%  free", pct);
             SetBkMode(dc, 1); // TRANSPARENT
             SetTextColor(dc, 0x00FF_FFFF);
+            let fh = -((h * 9 / 20).max(10)); // ~45% of taskbar height
+            let font = CreateFontW(
+                fh, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0,
+                wide("Segoe UI").as_ptr(),
+            );
+            let old = SelectObject(dc, font);
             let tr = Rect { left: 0, top: 2, right: w, bottom: h - 8 };
             DrawTextW(dc, wide(&txt).as_ptr(), -1, &tr as *const _ as *mut Rect, 0x25); // DT_CENTER|SINGLELINE|VCENTER
+            SelectObject(dc, old);
+            DeleteObject(font);
             EndPaint(hwnd, &ps);
             0
         }
