@@ -134,6 +134,7 @@ static CPU_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new
 static RAM_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static GPU_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static GPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static CPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static NVML_DEV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static W_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -234,6 +235,8 @@ unsafe extern "system" {
     fn GetSystemTimes(idle: *mut FileTime, kern: *mut FileTime, user: *mut FileTime) -> i32;
     fn LoadLibraryW(n: *const u16) -> *mut c_void;
     fn GetProcAddress(m: *mut c_void, n: *const u8) -> *mut c_void;
+    fn GetCurrentThread() -> isize;
+    fn SetThreadAffinityMask(h: isize, mask: usize) -> usize;
 }
 #[link(name = "pdh")]
 unsafe extern "system" {
@@ -465,6 +468,92 @@ fn init_nvml() {
     }
 }
 
+// ---- CPU temp via PawnIO (no LHM needed) ----
+// PawnIOLib.dll API: open/load(blob)/execute(fn, in, out)
+type PawnOpen = unsafe extern "system" fn(*mut isize) -> i32;
+type PawnLoad = unsafe extern "system" fn(isize, *const u8, usize) -> i32;
+type PawnExec = unsafe extern "system" fn(isize, *const u8, *const u64, usize, *mut u64, usize, *mut usize) -> i32;
+
+static PAWN_HANDLE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static PAWN_EXEC: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn init_pawnio() {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        let m = LoadLibraryW(wide("C:\\Program Files\\PawnIO\\PawnIOLib.dll").as_ptr());
+        if m.is_null() {
+            return;
+        }
+        let open: PawnOpen = std::mem::transmute(GetProcAddress(m, b"pawnio_open\0".as_ptr()));
+        let load: PawnLoad = std::mem::transmute(GetProcAddress(m, b"pawnio_load\0".as_ptr()));
+        let exec: PawnExec = std::mem::transmute(GetProcAddress(m, b"pawnio_execute\0".as_ptr()));
+        let (o, l, e) = (open as usize, load as usize, exec as usize);
+        if o == 0 || l == 0 || e == 0 {
+            return;
+        }
+        let mut h: isize = 0;
+        if open(&mut h) != 0 {
+            return;
+        }
+        let blob = include_bytes!("IntelMSR.bin");
+        if load(h, blob.as_ptr(), blob.len()) != 0 {
+            return;
+        }
+        PAWN_HANDLE.store(h, Relaxed);
+        PAWN_EXEC.store(e, Relaxed);
+    }
+}
+
+/// read MSR on the current core; returns None on failure
+fn read_msr(msr: u64) -> Option<u64> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (h, ef) = (PAWN_HANDLE.load(Relaxed), PAWN_EXEC.load(Relaxed));
+    if h == 0 || ef == 0 {
+        return None;
+    }
+    unsafe {
+        let f: PawnExec = std::mem::transmute(ef);
+        let inp = [msr];
+        let mut out = [0u64; 1];
+        let mut ret = 0usize;
+        let hr = f(
+            h,
+            b"ioctl_read_msr\0".as_ptr(),
+            inp.as_ptr(),
+            1,
+            out.as_mut_ptr(),
+            1,
+            &mut ret,
+        );
+        if hr == 0 && ret >= 1 { Some(out[0]) } else { None }
+    }
+}
+
+fn cpu_temp() -> Option<i32> {
+    unsafe {
+        // TjMax from MSR 0x1A2 (MSR_TEMPERATURE_TARGET), bits 23:16
+        let tj = read_msr(0x1A2)?;
+        let tjmax = ((tj >> 16) & 0xFF) as i32;
+        if !(60..=120).contains(&tjmax) {
+            return None;
+        }
+        let mut hottest: Option<i32> = None;
+        let cores = 8usize;
+        let th = GetCurrentThread();
+        for c in 0..cores {
+            SetThreadAffinityMask(th, 1usize << c);
+            if let Some(v) = read_msr(0x19C) {
+                // bits 22:16 = degrees below TjMax
+                let delta = ((v >> 16) & 0x7F) as i32;
+                let t = tjmax - delta;
+                hottest = Some(hottest.map_or(t, |h| h.max(t)));
+            }
+        }
+        SetThreadAffinityMask(th, usize::MAX);
+        hottest
+    }
+}
+
 fn collect_metrics() {
     use std::sync::atomic::Ordering::Relaxed;
     unsafe {
@@ -505,6 +594,10 @@ fn collect_metrics() {
             );
         } else {
             W_PCT.store(-1, Relaxed);
+        }
+        // CPU temp via PawnIO
+        if let Some(t) = cpu_temp() {
+            CPU_TEMP.store(t, Relaxed);
         }
         // GPU temp via NVML
         let (dev, tf) = (NVML_DEV.load(Relaxed), NVML_TEMP_FN.load(Relaxed));
@@ -594,7 +687,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 ("C:/", format!("{}%", pct), if pct < 20 { warn } else { white }),
                 ("W:/", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
-                ("C°", "—".into(), white),   // CPU temp: needs LHM running
+                ("C°", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
                 ("G°", ttxt, white),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
@@ -1000,6 +1093,7 @@ pub fn main() {
         load_settings();
         init_pdh();
         init_nvml();
+        init_pawnio();
         update_tray(hwnd);
         collect_metrics();
 
