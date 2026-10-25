@@ -167,6 +167,8 @@ unsafe extern "system" {
     fn BeginPaint(h: HWND, p: *mut PaintStruct) -> HDC;
     fn EndPaint(h: HWND, p: *const PaintStruct) -> i32;
     fn FillRect(d: HDC, r: *const Rect, b: HBRUSH) -> i32;
+    fn SetProcessDpiAwarenessContext(c: isize) -> i32;
+    fn SetProcessDPIAware() -> i32;
 }
 #[link(name = "shell32")]
 unsafe extern "system" {
@@ -267,7 +269,8 @@ fn widget_rect() -> Option<(i32, i32, i32, i32)> {
             return None;
         }
         let w = 110; // wide enough for "NN%" + bar
-        Some((r.left - w, r.top, w, r.bottom - r.top))
+        // height -1: keep the taskbar's top border line visible
+        Some((r.left - w, r.top, w, r.bottom - r.top - 1))
     }
 }
 
@@ -476,6 +479,11 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
 
 pub fn main() {
     unsafe {
+        // per-monitor v2: sharp rendering at any DPI (else the window is
+        // bitmap-scaled by the system and text looks blurry)
+        if SetProcessDpiAwarenessContext(-4) == 0 {
+            SetProcessDPIAware();
+        }
         CreateMutexW(std::ptr::null_mut(), 1, wide("disktray-mutex").as_ptr());
         if GetLastError() == 183 {
             return; // already running
