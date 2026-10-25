@@ -246,15 +246,16 @@ fn create_children(hwnd: HWND) {
         mk("BUTTON", x, 8, w, 28, text, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, id)
     };
 
-    let b1 = btn(8, 110, "Scan C:\\", ID_SCAN_C);
-    let b2 = btn(126, 130, "Scan folder...", ID_SCAN_FOLDER);
-    let b3 = btn(264, 120, "Compact WSL", ID_COMPACT);
-    let lbl = mk("STATIC", 392, 12, 40, 20, "View:", WS_CHILD | WS_VISIBLE | SS_LEFT, 0);
+    let b1 = btn(8, 95, "Scan C:\\", ID_SCAN_C);
+    let bw = btn(108, 95, "Scan W:\\", ID_SCAN_W);
+    let b2 = btn(208, 120, "Scan folder...", ID_SCAN_FOLDER);
+    let b3 = btn(334, 110, "Compact WSL", ID_COMPACT);
+    let lbl = mk("STATIC", 452, 12, 40, 20, "View:", WS_CHILD | WS_VISIBLE | SS_LEFT, 0);
     let combo = mk(
         "COMBOBOX",
-        434,
+        492,
         8,
-        150,
+        140,
         200,
         "",
         WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
@@ -266,8 +267,8 @@ fn create_children(hwnd: HWND) {
         }
     }
     unsafe { SendMessageW(combo, CB_SETCURSEL, 0, 0) };
-    let b4 = btn(592, 95, "Explorer", ID_EXPLORER);
-    let b5 = btn(694, 80, "Delete", ID_DELETE);
+    let b4 = btn(640, 90, "Explorer", ID_EXPLORER);
+    let b5 = btn(736, 75, "Delete", ID_DELETE);
     // admin relaunch lives in Actions menu; status bar shows [admin] when elevated
     let admin_btn = 0usize as HWND;
 
@@ -359,6 +360,7 @@ fn create_children(hwnd: HWND) {
     w.combo = combo as usize;
     w.kids = vec![
         b1 as usize,
+        bw as usize,
         b2 as usize,
         b3 as usize,
         b4 as usize,
@@ -456,6 +458,7 @@ pub fn run() {
         let bar_menu = CreateMenu();
         let actions = CreateMenu();
         AppendMenuW(actions, MF_STRING, ID_SCAN_C, wide("Scan C:\\").as_ptr());
+        AppendMenuW(actions, MF_STRING, ID_SCAN_W, wide("Scan W:\\").as_ptr());
         AppendMenuW(
             actions,
             MF_STRING,

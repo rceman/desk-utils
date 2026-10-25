@@ -171,6 +171,7 @@ pub(crate) const ID_DELETE: usize = 107;
 pub(crate) const ID_ADMIN: usize = 108;
 pub(crate) const ID_LIST: usize = 109;
 pub(crate) const ID_DARK: usize = 110;
+pub(crate) const ID_SCAN_W: usize = 112;
 pub(crate) const ID_PICK_OK: usize = 300;
 pub(crate) const ID_PICK_CANCEL: usize = 301;
 pub(crate) const ID_PICK_CHECK0: usize = 400;

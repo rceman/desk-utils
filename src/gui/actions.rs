@@ -158,6 +158,11 @@ pub(crate) fn on_action(hwnd: HWND, id: usize, notify: u32) {
                 start_scan(crate::to_extended(&PathBuf::from(r"C:\")));
             }
         }
+        ID_SCAN_W => {
+            if !busy {
+                start_scan(crate::to_extended(&PathBuf::from(r"W:\")));
+            }
+        }
         ID_SCAN_FOLDER => {
             if busy {
                 return;
