@@ -327,8 +327,8 @@ fn widget_rect() -> Option<(i32, i32, i32, i32)> {
         use std::sync::atomic::Ordering::Relaxed;
         let w = W_WIDTH.load(Relaxed);
         let xoff = W_XOFF.load(Relaxed);
-        // height -1: keep the taskbar's top border line visible
-        Some((r.left - w + xoff, r.top, w, r.bottom - r.top - 1))
+        // inset: keep taskbar borders visible, slimmer than full height
+        Some((r.left - w + xoff, r.top + 4, w, r.bottom - r.top - 8))
     }
 }
 
@@ -469,12 +469,6 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             DeleteObject(bg);
             use std::sync::atomic::Ordering::Relaxed;
             let pct = LAST_PCT.load(Relaxed);
-            let barh = W_BARH.load(Relaxed);
-            // fill bar: bottom strip, width = C: free pct
-            let bar = CreateSolidBrush(pct_color(pct));
-            let br = Rect { left: 4, top: h - 2 - barh, right: 4 + ((w - 8) * pct as i32 / 100), bottom: h - 2 };
-            FillRect(dc, &br, bar);
-            DeleteObject(bar);
             // grid: CPU/RAM/GPU labels on top row, values bottom row;
             // last column = C: (top) and W: (bottom)
             let (cpu, ram) = (CPU_PCT.load(Relaxed), RAM_PCT.load(Relaxed));
@@ -483,13 +477,13 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let gtxt = if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
             let wtxt = if wp >= 0 { format!("W: {}%", wp) } else { "W: —".into() };
             SetBkMode(dc, 1); // TRANSPARENT
-            let fh = -(((h - barh - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
+            let fh = -(((h - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
             let font = CreateFontW(
                 fh, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0,
                 wide("Segoe UI").as_ptr(),
             );
             let old = SelectObject(dc, font);
-            let rows_h = h - barh - 3;
+            let rows_h = h;
             let cw = w / 4;
             let dim = 0x00A0_A0A0u32;
             let top = [
