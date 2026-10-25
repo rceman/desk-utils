@@ -519,7 +519,6 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let gpu = GPU_PCT.load(Relaxed);
             let wp = W_PCT.load(Relaxed);
             let gtxt = if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
-            let wtxt = if wp >= 0 { format!("W: {}%", wp) } else { "W: —".into() };
             SetBkMode(dc, 1); // TRANSPARENT
             let fh = -(((h - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
             let font = CreateFontW(
@@ -528,7 +527,6 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             );
             let old = SelectObject(dc, font);
             let rows_h = h;
-            let cw = w / 4;
             let dim = 0x00A0_A0A0u32;
             let warn = 0x0000_8CFFu32; // orange (BGR)
             let white = 0x00FF_FFFFu32;
@@ -536,23 +534,35 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 ("CPU".to_string(), dim),
                 ("RAM".to_string(), dim),
                 ("GPU".to_string(), dim),
-                (format!("C: {}%", pct), if pct < 20 { warn } else { dim }),
             ];
             let bot = [
                 (format!("{}%", cpu), white),
                 (format!("{}%", ram), white),
                 (gtxt, white),
-                (wtxt, if wp < 0 { dim } else if wp < 20 { warn } else { white }),
             ];
-            for c in 0..4usize {
+            // metric cols 0-2 share 63%, disk col gets the rest (wider for "C: NN%")
+            let cw = w * 21 / 100;
+            for c in 0..3usize {
                 let x0 = c as i32 * cw;
-                let x1 = if c == 3 { w } else { x0 + cw };
-                let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
-                let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
+                let mut rt = Rect { left: x0, top: 0, right: x0 + cw, bottom: rows_h / 2 };
+                let mut rb = Rect { left: x0, top: rows_h / 2, right: x0 + cw, bottom: rows_h };
                 SetTextColor(dc, top[c].1);
                 DrawTextW(dc, wide(&top[c].0).as_ptr(), -1, &mut rt, 0x25);
                 SetTextColor(dc, bot[c].1);
                 DrawTextW(dc, wide(&bot[c].0).as_ptr(), -1, &mut rb, 0x25);
+            }
+            // disk column: label gray (left) + value colored (right)
+            let dx0 = 3 * cw;
+            for (y0, y1, lbl, val, col) in [
+                (0, rows_h / 2, "C:", format!("{}%", pct), if pct < 20 { warn } else { white }),
+                (rows_h / 2, rows_h, "W:", if wp >= 0 { format!("{}%", wp) } else { "—".into() }, if wp < 0 { dim } else if wp < 20 { warn } else { white }),
+            ] {
+                let mut rl = Rect { left: dx0, top: y0, right: dx0 + 24, bottom: y1 };
+                let mut rv = Rect { left: dx0 + 24, top: y0, right: w - 2, bottom: y1 };
+                SetTextColor(dc, dim);
+                DrawTextW(dc, wide(lbl).as_ptr(), -1, &mut rl, 0x24); // left|vcenter
+                SetTextColor(dc, col);
+                DrawTextW(dc, wide(&val).as_ptr(), -1, &mut rv, 0x22); // right|vcenter
             }
             SelectObject(dc, old);
             DeleteObject(font);
