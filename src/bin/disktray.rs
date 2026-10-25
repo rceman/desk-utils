@@ -122,7 +122,50 @@ const WM_LBUTTONUP: u32 = 0x0202;
 
 static WIDGET_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static WIDGET_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static CFG_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+// widget tuning (persisted to disktray.ini)
+static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(200);
+static W_XOFF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(45);
+static W_BARH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(3);
+// live metrics
+static CPU_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static RAM_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static GPU_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static W_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static PDH_C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static PREV_TIMES: std::sync::Mutex<(u64, u64, u64)> = std::sync::Mutex::new((0, 0, 0));
+
+#[repr(C)]
+struct MemoryStatus {
+    len: u32,
+    load: u32,
+    total_phys: u64,
+    avail_phys: u64,
+    total_pf: u64,
+    avail_pf: u64,
+    total_v: u64,
+    avail_v: u64,
+    ext_v: u64,
+}
+#[repr(C)]
+struct FileTime {
+    lo: u32,
+    hi: u32,
+}
+#[repr(C)]
+struct PdhValue {
+    status: u32,
+    _pad: u32,
+    val: f64,
+}
+#[repr(C)]
+struct PdhItem {
+    name: *mut u16,
+    fmt: PdhValue,
+}
 
 #[repr(C)]
 struct PaintStruct {
@@ -169,6 +212,10 @@ unsafe extern "system" {
     fn FillRect(d: HDC, r: *const Rect, b: HBRUSH) -> i32;
     fn SetProcessDpiAwarenessContext(c: isize) -> i32;
     fn SetProcessDPIAware() -> i32;
+    fn GetWindowTextW(h: HWND, b: *mut u16, n: i32) -> i32;
+    fn SetWindowTextW(h: HWND, t: *const u16) -> i32;
+    fn GetDlgItem(h: HWND, id: i32) -> HWND;
+    fn SendMessageW(h: HWND, m: u32, w: usize, l: isize) -> isize;
 }
 #[link(name = "shell32")]
 unsafe extern "system" {
@@ -180,6 +227,15 @@ unsafe extern "system" {
     fn CreateMutexW(a: *mut c_void, own: i32, n: *const u16) -> *mut c_void;
     fn GetLastError() -> u32;
     fn GetDiskFreeSpaceExW(d: *const u16, free_caller: *mut u64, total: *mut u64, total_free: *mut u64) -> i32;
+    fn GlobalMemoryStatusEx(m: *mut MemoryStatus) -> i32;
+    fn GetSystemTimes(idle: *mut FileTime, kern: *mut FileTime, user: *mut FileTime) -> i32;
+}
+#[link(name = "pdh")]
+unsafe extern "system" {
+    fn PdhOpenQueryW(d: *const u16, ud: usize, q: *mut *mut c_void) -> u32;
+    fn PdhAddEnglishCounterW(q: *mut c_void, path: *const u16, ud: usize, c: *mut *mut c_void) -> u32;
+    fn PdhCollectQueryData(q: *mut c_void) -> u32;
+    fn PdhGetFormattedCounterArrayW(c: *mut c_void, fmt: u32, sz: *mut u32, cnt: *mut u32, buf: *mut u8) -> u32;
 }
 #[link(name = "gdi32")]
 unsafe extern "system" {
@@ -268,9 +324,11 @@ fn widget_rect() -> Option<(i32, i32, i32, i32)> {
         if GetWindowRect(notify, &mut r) == 0 {
             return None;
         }
-        let w = 110; // wide enough for "NN%" + bar
+        use std::sync::atomic::Ordering::Relaxed;
+        let w = W_WIDTH.load(Relaxed);
+        let xoff = W_XOFF.load(Relaxed);
         // height -1: keep the taskbar's top border line visible
-        Some((r.left - w, r.top, w, r.bottom - r.top - 1))
+        Some((r.left - w + xoff, r.top, w, r.bottom - r.top - 1))
     }
 }
 
@@ -289,6 +347,97 @@ fn park_widget() {
             MoveWindow(hw, x, y, w, h, 1);
             ShowWindow(hw, SW_SHOWNA);
             InvalidateRect(hw, std::ptr::null(), 1);
+        }
+    }
+}
+
+fn ft_u64(f: &FileTime) -> u64 {
+    ((f.hi as u64) << 32) | f.lo as u64
+}
+
+fn init_pdh() {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        let mut q: *mut c_void = null_mut();
+        if PdhOpenQueryW(std::ptr::null(), 0, &mut q) != 0 {
+            return;
+        }
+        let mut c: *mut c_void = null_mut();
+        if PdhAddEnglishCounterW(
+            q,
+            wide("\\GPU Engine(*)\\Utilization Percentage").as_ptr(),
+            0,
+            &mut c,
+        ) != 0
+        {
+            return;
+        }
+        PdhCollectQueryData(q);
+        PDH_Q.store(q as usize, Relaxed);
+        PDH_C.store(c as usize, Relaxed);
+    }
+}
+
+fn collect_metrics() {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        // RAM
+        let mut m = MemoryStatus {
+            len: std::mem::size_of::<MemoryStatus>() as u32,
+            load: 0, total_phys: 0, avail_phys: 0,
+            total_pf: 0, avail_pf: 0, total_v: 0, avail_v: 0, ext_v: 0,
+        };
+        if GlobalMemoryStatusEx(&mut m) != 0 {
+            RAM_PCT.store(m.load, Relaxed);
+        }
+        // CPU: delta of GetSystemTimes
+        let (mut i, mut k, mut u) = (
+            FileTime { lo: 0, hi: 0 },
+            FileTime { lo: 0, hi: 0 },
+            FileTime { lo: 0, hi: 0 },
+        );
+        if GetSystemTimes(&mut i, &mut k, &mut u) != 0 {
+            let (ci, ck, cu) = (ft_u64(&i), ft_u64(&k), ft_u64(&u));
+            let mut p = PREV_TIMES.lock().unwrap();
+            if p.0 != 0 {
+                let (di, dk, du) = (ci - p.0, ck - p.1, cu - p.2);
+                let busy = dk + du - di;
+                let total = dk + du;
+                if total > 0 {
+                    CPU_PCT.store(((busy * 100) / total) as u32, Relaxed);
+                }
+            }
+            *p = (ci, ck, cu);
+        }
+        // W: free %
+        let (mut free, mut total, mut tf) = (0u64, 0u64, 0u64);
+        if GetDiskFreeSpaceExW(wide("W:\\").as_ptr(), &mut free, &mut total, &mut tf) != 0 {
+            W_PCT.store(
+                (free as f64 / total.max(1) as f64 * 100.0).round() as i32,
+                Relaxed,
+            );
+        } else {
+            W_PCT.store(-1, Relaxed);
+        }
+        // GPU via PDH
+        let (q, c) = (PDH_Q.load(Relaxed) as *mut c_void, PDH_C.load(Relaxed) as *mut c_void);
+        if !q.is_null() && !c.is_null() && PdhCollectQueryData(q) == 0 {
+            let (mut sz, mut cnt) = (0u32, 0u32);
+            if PdhGetFormattedCounterArrayW(c, 0x200, &mut sz, &mut cnt, null_mut())
+                == 0x8000_07D2
+            {
+                let mut buf = vec![0u8; sz as usize];
+                if PdhGetFormattedCounterArrayW(c, 0x200, &mut sz, &mut cnt, buf.as_mut_ptr()) == 0 {
+                    let items = std::slice::from_raw_parts(buf.as_ptr() as *const PdhItem, cnt as usize);
+                    let mut mx = 0f64;
+                    for it in items {
+                        if it.fmt.status == 0 && it.fmt.val > mx {
+                            mx = it.fmt.val;
+                        }
+                    }
+                    GPU_PCT.store(mx.round().clamp(0.0, 100.0) as i32, Relaxed);
+                }
+            }
         }
     }
 }
@@ -318,24 +467,53 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let all = Rect { left: 0, top: 0, right: w, bottom: h };
             FillRect(dc, &all, bg);
             DeleteObject(bg);
-            let pct = LAST_PCT.load(std::sync::atomic::Ordering::Relaxed);
-            // fill bar: bottom strip, width = pct% of w
+            use std::sync::atomic::Ordering::Relaxed;
+            let pct = LAST_PCT.load(Relaxed);
+            let barh = W_BARH.load(Relaxed);
+            // fill bar: bottom strip, width = C: free pct
             let bar = CreateSolidBrush(pct_color(pct));
-            let br = Rect { left: 4, top: h - 7, right: 4 + ((w - 8) * pct as i32 / 100), bottom: h - 3 };
+            let br = Rect { left: 4, top: h - 2 - barh, right: 4 + ((w - 8) * pct as i32 / 100), bottom: h - 2 };
             FillRect(dc, &br, bar);
             DeleteObject(bar);
-            // text "NN% free" — font height scales with taskbar height (= DPI-aware)
-            let txt = format!("{}%  free", pct);
+            // grid: CPU/RAM/GPU labels on top row, values bottom row;
+            // last column = C: (top) and W: (bottom)
+            let (cpu, ram) = (CPU_PCT.load(Relaxed), RAM_PCT.load(Relaxed));
+            let gpu = GPU_PCT.load(Relaxed);
+            let wp = W_PCT.load(Relaxed);
+            let gtxt = if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
+            let wtxt = if wp >= 0 { format!("W: {}%", wp) } else { "W: —".into() };
             SetBkMode(dc, 1); // TRANSPARENT
-            SetTextColor(dc, 0x00FF_FFFF);
-            let fh = -((h * 9 / 20).max(10)); // ~45% of taskbar height
+            let fh = -(((h - barh - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
             let font = CreateFontW(
                 fh, 0, 0, 0, 600, 0, 0, 0, 0, 0, 0, 0, 0,
                 wide("Segoe UI").as_ptr(),
             );
             let old = SelectObject(dc, font);
-            let tr = Rect { left: 0, top: 2, right: w, bottom: h - 8 };
-            DrawTextW(dc, wide(&txt).as_ptr(), -1, &tr as *const _ as *mut Rect, 0x25); // DT_CENTER|SINGLELINE|VCENTER
+            let rows_h = h - barh - 3;
+            let cw = w / 4;
+            let dim = 0x00A0_A0A0u32;
+            let top = [
+                ("CPU".to_string(), dim),
+                ("RAM".to_string(), dim),
+                ("GPU".to_string(), dim),
+                (format!("C: {}%", pct), pct_color(pct)),
+            ];
+            let bot = [
+                (format!("{}%", cpu), 0x00FF_FFFF),
+                (format!("{}%", ram), 0x00FF_FFFF),
+                (gtxt, 0x00FF_FFFF),
+                (wtxt, if wp >= 0 { pct_color(wp as u32) } else { dim }),
+            ];
+            for c in 0..4usize {
+                let x0 = c as i32 * cw;
+                let x1 = if c == 3 { w } else { x0 + cw };
+                let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
+                let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
+                SetTextColor(dc, top[c].1);
+                DrawTextW(dc, wide(&top[c].0).as_ptr(), -1, &mut rt, 0x25);
+                SetTextColor(dc, bot[c].1);
+                DrawTextW(dc, wide(&bot[c].0).as_ptr(), -1, &mut rb, 0x25);
+            }
             SelectObject(dc, old);
             DeleteObject(font);
             EndPaint(hwnd, &ps);
@@ -347,6 +525,144 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             0
         }
         _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
+// ---- settings window ----
+
+fn ini_path() -> String {
+    format!("{}\\disktray.ini", exe_dir())
+}
+
+fn load_settings() {
+    use std::sync::atomic::Ordering::Relaxed;
+    if let Ok(s) = std::fs::read_to_string(ini_path()) {
+        for line in s.lines() {
+            let mut kv = line.splitn(2, '=');
+            let (k, v) = (kv.next().unwrap_or(""), kv.next().unwrap_or(""));
+            let Ok(n) = v.trim().parse::<i32>() else { continue };
+            match k.trim() {
+                "w" => W_WIDTH.store(n, Relaxed),
+                "x" => W_XOFF.store(n, Relaxed),
+                "f" => W_FONTPC.store(n, Relaxed),
+                "b" => W_BARH.store(n, Relaxed),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn save_settings() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let s = format!(
+        "w={}\nx={}\nf={}\nb={}\n",
+        W_WIDTH.load(Relaxed),
+        W_XOFF.load(Relaxed),
+        W_FONTPC.load(Relaxed),
+        W_BARH.load(Relaxed)
+    );
+    let _ = std::fs::write(ini_path(), s);
+}
+
+unsafe extern "system" fn cfg_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
+    use std::sync::atomic::Ordering::Relaxed;
+    match msg {
+        WM_COMMAND => match w & 0xFFFF {
+            210 => {
+                // Apply
+                for (id, cell) in [
+                    (200i32, &W_WIDTH),
+                    (201, &W_XOFF),
+                    (202, &W_FONTPC),
+                    (203, &W_BARH),
+                ] {
+                    let e = GetDlgItem(hwnd, id);
+                    let mut buf = [0u16; 32];
+                    GetWindowTextW(e, buf.as_mut_ptr(), 32);
+                    let end = buf.iter().position(|&c| c == 0).unwrap_or(32);
+                    let s = String::from_utf16_lossy(&buf[..end]);
+                    if let Ok(n) = s.trim().parse::<i32>() {
+                        cell.store(n, Relaxed);
+                    }
+                }
+                save_settings();
+                park_widget();
+                0
+            }
+            211 => {
+                DestroyWindow(hwnd);
+                CFG_HWND.store(0, Relaxed);
+                0
+            }
+            _ => 0,
+        },
+        WM_DESTROY => {
+            CFG_HWND.store(0, Relaxed);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
+fn open_settings(owner: HWND) {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        let cur = CFG_HWND.load(Relaxed) as HWND;
+        if !cur.is_null() {
+            SetForegroundWindow(cur);
+            return;
+        }
+        let inst = GetModuleHandleW(std::ptr::null_mut());
+        let c = wide("disktray_cfg");
+        let wc = WndClassEx {
+            cb_size: std::mem::size_of::<WndClassEx>() as u32,
+            style: 0,
+            wnd_proc: cfg_proc as usize,
+            cls_extra: 0,
+            wnd_extra: 0,
+            inst,
+            icon: null_mut(),
+            cursor: LoadCursorW(null_mut(), 32512),
+            hbr_background: 16 as HBRUSH,
+            menu_name: std::ptr::null(),
+            class_name: c.as_ptr(),
+            icon_sm: null_mut(),
+        };
+        RegisterClassExW(&wc);
+        let h = CreateWindowExW(
+            0,
+            c.as_ptr(),
+            wide("disktray widget").as_ptr(),
+            0x00CF_0000, // WS_OVERLAPPEDWINDOW
+            -2147483648, -2147483648, 260, 220,
+            owner, null_mut(), inst, null_mut(),
+        );
+        let font = CreateFontW(-14, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, wide("Segoe UI").as_ptr());
+        let mk = |x: i32, y: i32, w: i32, hh: i32, txt: &str, cls: &str, id: usize, st: u32| -> HWND {
+            let e = CreateWindowExW(
+                st, wide(cls).as_ptr(), wide(txt).as_ptr(),
+                0x5000_0000, // WS_CHILD|WS_VISIBLE
+                x, y, w, hh, h, id as HMENU, inst, null_mut(),
+            );
+            SendMessageW(e, 0x30, font as usize, 1);
+            e
+        };
+        let vals = [
+            W_WIDTH.load(Relaxed).to_string(),
+            W_XOFF.load(Relaxed).to_string(),
+            W_FONTPC.load(Relaxed).to_string(),
+            W_BARH.load(Relaxed).to_string(),
+        ];
+        let rows = [("Width", &vals[0], 200), ("X offset", &vals[1], 201), ("Font %", &vals[2], 202), ("Bar h", &vals[3], 203)];
+        for (i, (lbl, val, id)) in rows.iter().enumerate() {
+            let y = 12 + i as i32 * 28;
+            mk(12, y, 90, 20, lbl, "STATIC", 0, 0);
+            mk(110, y - 2, 60, 22, val, "EDIT", *id, 0x800);
+        }
+        mk(30, 128, 90, 26, "Apply", "BUTTON", 210, 0);
+        mk(130, 128, 90, 26, "Close", "BUTTON", 211, 0);
+        ShowWindow(h, 5);
+        CFG_HWND.store(h as usize, Relaxed);
     }
 }
 
@@ -393,7 +709,15 @@ fn update_tray(hwnd: HWND) {
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
     match msg {
         WM_TIMER => {
-            update_tray(hwnd);
+            if w == 2 {
+                collect_metrics();
+                let wh = WIDGET_HWND.load(std::sync::atomic::Ordering::Relaxed) as HWND;
+                if !wh.is_null() {
+                    unsafe { InvalidateRect(wh, std::ptr::null(), 0) };
+                }
+            } else {
+                update_tray(hwnd);
+            }
             0
         }
         WM_TRAY => {
@@ -415,6 +739,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
                 let wf = if WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed) { MF_CHECKED } else { 0 };
                 AppendMenuW(m, wf, ID_WIDGET, wide("Taskbar widget").as_ptr());
+                AppendMenuW(m, MF_STRING, 6, wide("Widget settings...").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
                 SetForegroundWindow(hwnd);
                 TrackPopupMenu(m, TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, std::ptr::null());
@@ -443,6 +768,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 let cur = WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed);
                 WIDGET_ON.store(!cur, std::sync::atomic::Ordering::Relaxed);
                 park_widget();
+                0
+            }
+            6 => {
+                open_settings(hwnd);
                 0
             }
             ID_EXIT => {
@@ -567,7 +896,11 @@ pub fn main() {
         d.timeout_or_version = 4;
         Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
+        SetTimer(hwnd, 2, 2_000, 0);
+        load_settings();
+        init_pdh();
         update_tray(hwnd);
+        collect_metrics();
 
         let mut msg = Msg {
             hwnd: null_mut(),
