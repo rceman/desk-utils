@@ -329,10 +329,19 @@ fn make_icon(free: u64, total: u64) -> HICON {
         if !bmp.is_null() && !bits.is_null() {
             let px = std::slice::from_raw_parts_mut(bits, 256);
             for p in px.iter_mut() { *p = 0xFF20_2020; } // dark bg
+            // monitor frame
+            for i in 0..16 {
+                px[i] = 0xFFA0_A0A0;
+                px[15 * 16 + i] = 0xFFA0_A0A0;
+                px[i * 16] = 0xFFA0_A0A0;
+                px[i * 16 + 15] = 0xFFA0_A0A0;
+            }
+            // 4 bars, evenly spread across the frame (x = 2,5,8,11 + 3px wide)
             for (i, (v, col)) in bars.iter().enumerate() {
-                let bh = (*v * 16 / 100) as usize;
-                for y in (16 - bh)..16 {
-                    for x in (i * 4)..(i * 4 + 3) {
+                let bh = (*v * 14 / 100).clamp(1, 14) as usize;
+                let x0 = 2 + i * 3;
+                for y in (15 - bh)..15 {
+                    for x in x0..(x0 + 2) {
                         px[y * 16 + x] = *col;
                     }
                 }
