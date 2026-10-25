@@ -124,7 +124,7 @@ static WIDGET_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 static WIDGET_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static CFG_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-// widget tuning (persisted to disktray.ini)
+// widget tuning (persisted to sysmon_tray.ini)
 static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(280);
 static W_XOFF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(60);
@@ -722,7 +722,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
 // ---- settings window ----
 
 fn ini_path() -> String {
-    format!("{}\\disktray.ini", exe_dir())
+    format!("{}\\sysmon_tray.ini", exe_dir())
 }
 
 fn load_settings() {
@@ -823,7 +823,7 @@ fn open_settings(owner: HWND) {
         let h = CreateWindowExW(
             0,
             c.as_ptr(),
-            wide("disktray widget").as_ptr(),
+            wide("sysmon widget").as_ptr(),
             0x00CF_0000, // WS_OVERLAPPEDWINDOW
             -2147483648, -2147483648, 260, 220,
             owner, null_mut(), inst, null_mut(),
@@ -932,7 +932,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
                 let wf = if WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed) { MF_CHECKED } else { 0 };
                 AppendMenuW(m, wf, ID_WIDGET, wide("Taskbar widget").as_ptr());
-                AppendMenuW(m, MF_STRING, 6, wide("Widget settings...").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
                 SetForegroundWindow(hwnd);
                 TrackPopupMenu(m, TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, std::ptr::null());
@@ -961,10 +960,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 let cur = WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed);
                 WIDGET_ON.store(!cur, std::sync::atomic::Ordering::Relaxed);
                 park_widget();
-                0
-            }
-            6 => {
-                open_settings(hwnd);
                 0
             }
             ID_EXIT => {
@@ -1006,7 +1001,7 @@ pub fn main() {
         if SetProcessDpiAwarenessContext(-4) == 0 {
             SetProcessDPIAware();
         }
-        CreateMutexW(std::ptr::null_mut(), 1, wide("disktray-mutex").as_ptr());
+        CreateMutexW(std::ptr::null_mut(), 1, wide("sysmon-tray-mutex").as_ptr());
         if GetLastError() == 183 {
             return; // already running
         }
@@ -1035,7 +1030,7 @@ pub fn main() {
         // hidden message window
         let hwnd = CreateWindowExW(0, class.as_ptr(), wide("disktray").as_ptr(), 0, 0, 0, 0, 0, null_mut(), null_mut(), inst, null_mut());
         // taskbar widget window class + instance
-        let wclass = wide("disktray_widget");
+        let wclass = wide("sysmon_widget");
         let wwc = WndClassEx {
             cb_size: std::mem::size_of::<WndClassEx>() as u32,
             style: 0,
