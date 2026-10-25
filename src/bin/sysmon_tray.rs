@@ -1087,7 +1087,7 @@ pub fn main() {
         Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
         SetTimer(hwnd, 2, 500, 0);
-        SetTimer(hwnd, 3, 100, 0);
+        SetTimer(hwnd, 3, 50, 0);
         load_settings();
         init_pdh();
         init_nvml();
