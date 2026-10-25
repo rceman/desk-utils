@@ -586,7 +586,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let white = 0x00FF_FFFFu32;
             // usage first, separator, then temps: CPU RAM GPU C:/ W:/ | C° G°
             let sep = 8i32;
-            let cw = (w - sep) / 7;
+            let cw = ((w - sep) / 7).max(36); // min column width
             let cells: [(&str, String, u32); 7] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
