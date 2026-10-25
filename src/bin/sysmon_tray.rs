@@ -941,7 +941,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
             if w == 3 {
                 use std::sync::atomic::Ordering::Relaxed;
                 let t = TICK.fetch_add(1, Relaxed);
-                if GetTickCount64() < FAST_UNTIL.load(Relaxed) || t % 1000 == 0 {
+                if GetTickCount64() < FAST_UNTIL.load(Relaxed) || t % 10 == 0 {
                     raise_widget();
                 }
             } else if w == 2 {
@@ -1122,7 +1122,7 @@ pub fn main() {
         Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
         SetTimer(hwnd, 2, 500, 0);
-        SetTimer(hwnd, 3, 5, 0);
+        SetTimer(hwnd, 3, 100, 0);
         SetWindowsHookExW(14 /* WH_MOUSE_LL */, mouse_hook as usize, std::ptr::null_mut(), 0);
         load_settings();
         init_pdh();
