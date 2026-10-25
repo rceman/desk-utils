@@ -730,8 +730,8 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 ("C:/", format!("{}%", pct), if pct < 20 { warn } else { white }),
                 ("W:/", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
-                ("C°", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
-                ("G°", ttxt, white),
+                ("CPU", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
+                ("GPU", ttxt, white),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
                 let shift = if i >= 5 { sep } else { 0 };
