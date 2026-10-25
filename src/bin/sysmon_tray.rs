@@ -122,6 +122,8 @@ const WM_LBUTTONUP: u32 = 0x0202;
 
 static WIDGET_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static WIDGET_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static FAST_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static CFG_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 // widget tuning (persisted to sysmon_tray.ini)
@@ -220,6 +222,8 @@ unsafe extern "system" {
     fn GetDlgItem(h: HWND, id: i32) -> HWND;
     fn SendMessageW(h: HWND, m: u32, w: usize, l: isize) -> isize;
     fn SetWindowPos(h: HWND, ins: isize, x: i32, y: i32, w: i32, hh: i32, f: u32) -> i32;
+    fn SetWindowsHookExW(id: i32, f: usize, m: *mut c_void, t: u32) -> *mut c_void;
+    fn CallNextHookEx(h: *mut c_void, c: i32, w: usize, l: isize) -> isize;
 }
 #[link(name = "shell32")]
 unsafe extern "system" {
@@ -237,6 +241,7 @@ unsafe extern "system" {
     fn GetProcAddress(m: *mut c_void, n: *const u8) -> *mut c_void;
     fn GetCurrentThread() -> isize;
     fn SetThreadAffinityMask(h: isize, mask: usize) -> usize;
+    fn GetTickCount64() -> u64;
 }
 #[link(name = "pdh")]
 unsafe extern "system" {
@@ -408,6 +413,32 @@ fn park_widget() {
             InvalidateRect(hw, std::ptr::null(), 1);
         }
     }
+}
+
+#[repr(C)]
+struct MsllHook {
+    pt: Point,
+    mouse_data: u32,
+    flags: u32,
+    time: u32,
+    extra: usize,
+}
+
+unsafe extern "system" fn mouse_hook(code: i32, w: usize, l: isize) -> isize {
+    use std::sync::atomic::Ordering::Relaxed;
+    if code >= 0 {
+        // WM_LBUTTONDOWN | WM_RBUTTONDOWN
+        if w == 0x0201 || w == 0x0204 {
+            let m = &*(l as *const MsllHook);
+            if let Some((_, ty, _, _)) = widget_rect() {
+                if m.pt.y >= ty {
+                    // click on taskbar -> fast z-order re-assert for 600ms
+                    FAST_UNTIL.store(GetTickCount64() + 600, Relaxed);
+                }
+            }
+        }
+    }
+    CallNextHookEx(std::ptr::null_mut(), code, w, l)
 }
 
 fn raise_widget() {
@@ -908,7 +939,11 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
     match msg {
         WM_TIMER => {
             if w == 3 {
-                raise_widget();
+                use std::sync::atomic::Ordering::Relaxed;
+                let t = TICK.fetch_add(1, Relaxed);
+                if GetTickCount64() < FAST_UNTIL.load(Relaxed) || t % 100 == 0 {
+                    raise_widget();
+                }
             } else if w == 2 {
                 collect_metrics();
                 update_tray(hwnd);
@@ -1087,7 +1122,8 @@ pub fn main() {
         Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
         SetTimer(hwnd, 2, 500, 0);
-        SetTimer(hwnd, 3, 50, 0);
+        SetTimer(hwnd, 3, 10, 0);
+        SetWindowsHookExW(14 /* WH_MOUSE_LL */, mouse_hook as usize, std::ptr::null_mut(), 0);
         load_settings();
         init_pdh();
         init_nvml();
