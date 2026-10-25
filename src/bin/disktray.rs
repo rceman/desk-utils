@@ -571,9 +571,8 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let gpu = GPU_PCT.load(Relaxed);
             let wp = W_PCT.load(Relaxed);
             let gt = GPU_TEMP.load(Relaxed);
-            let gtxt = if gpu >= 0 && gt >= 0 { format!("{}% {}°", gpu, gt) }
-                       else if gt >= 0 { format!("{}°", gt) }
-                       else if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
+            let gtxt = if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
+            let ttxt = if gt >= 0 { format!("{}°", gt) } else { "—".into() };
             SetBkMode(dc, 1); // TRANSPARENT
             let fh = -(((h - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
             let font = CreateFontW(
@@ -585,19 +584,22 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let dim = 0x00A0_A0A0u32;
             let warn = 0x0000_8CFFu32; // orange (BGR)
             let white = 0x00FF_FFFFu32;
-            // 5 equal cols: CPU RAM GPU C: W: — values aligned on one row
-            let cw = w / 5;
-            let cells: [(&str, String, u32); 5] = [
+            // 6 cols + separator before temps: CPU RAM GPU | TMP C: W:
+            let sep = 4i32;
+            let cw = (w - sep) / 6;
+            let cells: [(&str, String, u32); 6] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
                 ("GPU", gtxt, if gpu >= 80 { warn } else { white }),
+                ("TMP", ttxt, white),
                 ("C:/", format!("{}%", pct), if pct < 20 { warn } else { white }),
                 ("W:/", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
-                let x0 = i as i32 * cw;
-                let x1 = if i == 4 { w } else { x0 + cw };
+                let shift = if i >= 3 { sep } else { 0 };
+                let x0 = i as i32 * cw + shift;
+                let x1 = if i == 5 { w } else { x0 + cw };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
                 let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
                 SetTextColor(dc, dim);
@@ -605,6 +607,10 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 SetTextColor(dc, *col);
                 DrawTextW(dc, wide(val).as_ptr(), -1, &mut rb, 0x25);
             }
+            let sb = CreateSolidBrush(0x0060_6060);
+            let sr = Rect { left: 3 * cw + 1, top: 3, right: 3 * cw + 2, bottom: h - 3 };
+            FillRect(dc, &sr, sb);
+            DeleteObject(sb);
             SelectObject(dc, old);
             DeleteObject(font);
             EndPaint(hwnd, &ps);
