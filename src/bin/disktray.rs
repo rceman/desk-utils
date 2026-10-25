@@ -599,8 +599,8 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
                 let shift = if i >= 5 { sep } else { 0 };
-                let x0 = i as i32 * cw + shift;
-                let x1 = if i == 6 { w } else { x0 + cw };
+                let x0 = i as i32 * cw + shift + 2;
+                let x1 = if i == 6 { w } else { x0 + cw - 4 };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
                 let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
                 SetTextColor(dc, dim);
