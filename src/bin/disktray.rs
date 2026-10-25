@@ -125,7 +125,7 @@ static WIDGET_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 static CFG_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 // widget tuning (persisted to disktray.ini)
-static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(240);
+static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(280);
 static W_XOFF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(60);
 static W_BARH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(3);
