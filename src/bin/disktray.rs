@@ -893,7 +893,7 @@ pub fn main() {
         d.timeout_or_version = 4;
         Shell_NotifyIconW(4 /* NIM_SETVERSION */, &mut d);
         SetTimer(hwnd, 1, 60_000, 0);
-        SetTimer(hwnd, 2, 2_000, 0);
+        SetTimer(hwnd, 2, 1_000, 0);
         load_settings();
         init_pdh();
         update_tray(hwnd);
