@@ -133,6 +133,8 @@ static W_BARH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(
 static CPU_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static RAM_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static GPU_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static GPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static NVML_DEV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static W_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static PDH_C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -230,6 +232,8 @@ unsafe extern "system" {
     fn GetDiskFreeSpaceExW(d: *const u16, free_caller: *mut u64, total: *mut u64, total_free: *mut u64) -> i32;
     fn GlobalMemoryStatusEx(m: *mut MemoryStatus) -> i32;
     fn GetSystemTimes(idle: *mut FileTime, kern: *mut FileTime, user: *mut FileTime) -> i32;
+    fn LoadLibraryW(n: *const u16) -> *mut c_void;
+    fn GetProcAddress(m: *mut c_void, n: *const u8) -> *mut c_void;
 }
 #[link(name = "pdh")]
 unsafe extern "system" {
@@ -430,6 +434,37 @@ fn init_pdh() {
     }
 }
 
+type NvmlTemp = unsafe extern "system" fn(*mut c_void, u32, *mut u32) -> u32;
+static NVML_TEMP_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn init_nvml() {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        for p in ["nvml.dll", "C:\\Windows\\System32\\nvml.dll"] {
+            let m = LoadLibraryW(wide(p).as_ptr());
+            if m.is_null() {
+                continue;
+            }
+            type Init = unsafe extern "system" fn() -> u32;
+            type ByIdx = unsafe extern "system" fn(u32, *mut *mut c_void) -> u32;
+            let init: Init = std::mem::transmute(GetProcAddress(m, b"nvmlInit_v2\0".as_ptr()));
+            let byidx: ByIdx = std::mem::transmute(GetProcAddress(m, b"nvmlDeviceGetHandleByIndex_v2\0".as_ptr()));
+            let temp: NvmlTemp = std::mem::transmute(GetProcAddress(m, b"nvmlDeviceGetTemperature\0".as_ptr()));
+            let i = init as usize;
+            let b = byidx as usize;
+            let t = temp as usize;
+            if i != 0 && b != 0 && t != 0 && init() == 0 {
+                let mut dev: *mut c_void = null_mut();
+                if byidx(0, &mut dev) == 0 {
+                    NVML_DEV.store(dev as usize, Relaxed);
+                    NVML_TEMP_FN.store(t, Relaxed);
+                }
+            }
+            return;
+        }
+    }
+}
+
 fn collect_metrics() {
     use std::sync::atomic::Ordering::Relaxed;
     unsafe {
@@ -470,6 +505,15 @@ fn collect_metrics() {
             );
         } else {
             W_PCT.store(-1, Relaxed);
+        }
+        // GPU temp via NVML
+        let (dev, tf) = (NVML_DEV.load(Relaxed), NVML_TEMP_FN.load(Relaxed));
+        if dev != 0 && tf != 0 {
+            let f: NvmlTemp = std::mem::transmute(tf);
+            let mut t = 0u32;
+            if f(dev as *mut c_void, 0, &mut t) == 0 {
+                GPU_TEMP.store(t as i32, Relaxed);
+            }
         }
         // GPU via PDH
         let (q, c) = (PDH_Q.load(Relaxed) as *mut c_void, PDH_C.load(Relaxed) as *mut c_void);
@@ -526,7 +570,10 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let (cpu, ram) = (CPU_PCT.load(Relaxed), RAM_PCT.load(Relaxed));
             let gpu = GPU_PCT.load(Relaxed);
             let wp = W_PCT.load(Relaxed);
-            let gtxt = if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
+            let gt = GPU_TEMP.load(Relaxed);
+            let gtxt = if gpu >= 0 && gt >= 0 { format!("{}% {}°", gpu, gt) }
+                       else if gt >= 0 { format!("{}°", gt) }
+                       else if gpu >= 0 { format!("{}%", gpu) } else { "—".into() };
             SetBkMode(dc, 1); // TRANSPARENT
             let fh = -(((h - 4) / 2 * W_FONTPC.load(Relaxed) / 100).max(8));
             let font = CreateFontW(
@@ -945,6 +992,7 @@ pub fn main() {
         SetTimer(hwnd, 2, 1_000, 0);
         load_settings();
         init_pdh();
+        init_nvml();
         update_tray(hwnd);
         collect_metrics();
 
