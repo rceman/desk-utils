@@ -796,13 +796,13 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 ("C:/", format!("{}%", pct), if pct < 20 { warn } else { white }),
                 ("W:/", if wp >= 0 { format!("{}%", wp) } else { "—".into() },
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
-                ("CDX", { let c = CDX_PCT.load(Relaxed); if c >= 0 { format!("{}%", (100 - c).max(0)) } else { "—".into() } },
-                 if CDX_PCT.load(Relaxed) >= 80 { warn } else { white }),
                 ("CPU", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
                 ("GPU", ttxt, white),
+                ("CDX", { let c = CDX_PCT.load(Relaxed); if c >= 0 { format!("{}%", (100 - c).max(0)) } else { "—".into() } },
+                 if CDX_PCT.load(Relaxed) >= 80 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
-                let shift = if i >= 6 { sep } else { 0 };
+                let shift = if i >= 7 { sep } else { 0 };
                 let x0 = i as i32 * cw + shift + 2;
                 let x1 = if i == 7 { w } else { x0 + cw - 4 };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
@@ -813,7 +813,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 DrawTextW(dc, wide(val).as_ptr(), -1, &mut rb, 0x25);
             }
             let sb = CreateSolidBrush(0x0060_6060);
-            let sr = Rect { left: 6 * cw + 4, top: 3, right: 6 * cw + 5, bottom: h - 3 };
+            let sr = Rect { left: 7 * cw + 4, top: 3, right: 7 * cw + 5, bottom: h - 3 };
             FillRect(dc, &sr, sb);
             DeleteObject(sb);
             SelectObject(dc, old);
