@@ -311,12 +311,11 @@ class Panel:
             self._st = "Stopping…"; self._render()
 
     def shot(self):
-        if not self.zone:
-            self._select_area()
-            if not self.zone:
-                return
+        zone = select_zone(self.root)
+        if zone is None:
+            return
         try:
-            img = grab(self.zone)
+            img = grab(zone)
             self.out_path = self._new_path()
             Image.fromarray(img).save(self.out_path)
             self.put("preview", img)
