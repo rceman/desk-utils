@@ -158,6 +158,7 @@ class Border:
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
+        self.grip.configure(bg="#00ff88", bd=0, highlightthickness=0)
         img = Image.new("RGB", (96, 96), "#00ff88")
         d = ImageDraw.Draw(img)
         c = "#0d3320"
