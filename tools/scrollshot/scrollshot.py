@@ -402,8 +402,8 @@ class Panel:
 
         self.scroll_iv = 1.0
         self.auto_scroll = tk.BooleanVar(value=False)
-        self.prtscr = tk.BooleanVar(value=False)
-        self._prtscr_flag = False
+        self.prtscr = tk.BooleanVar(value=True)
+        self._prtscr_flag = True
         self.copy_as_path = tk.BooleanVar(value=True)
         row = tk.Frame(self.root, bg="#1e1e1e")
         row.pack(anchor="w", padx=10)
@@ -708,6 +708,14 @@ class Panel:
     def _prtscr_hook(self):
         import ctypes
         from ctypes import wintypes
+        try:
+            self._hook_body()
+        except Exception as e:
+            log(f"kb hook crashed: {e!r}")
+
+    def _hook_body(self):
+        import ctypes
+        from ctypes import wintypes
         u = ctypes.windll.user32
 
         class KB(ctypes.Structure):
@@ -728,7 +736,7 @@ class Panel:
 
         self._kb_cb = CB(proc)
         self._hook = u.SetWindowsHookExW(13, self._kb_cb, None, 0)
-        log(f"kb hook={self._hook} err={u.GetLastError()}")
+        log(f"kb hook={self._hook} err={ctypes.windll.kernel32.GetLastError()}")
         m = wintypes.MSG()
         while u.GetMessageW(ctypes.byref(m), None, 0, 0) > 0:
             pass
