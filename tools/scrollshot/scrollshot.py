@@ -154,7 +154,8 @@ class Panel:
         tk.Button(r0, text="Select Area", command=self.select_area, bg="#4a2d6a", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         self.btn_rec = tk.Button(r0, text="Start", command=self.toggle_rec, bg="#2d6a2d",
-                                 fg="white", font=("Consolas", 10), width=14, state="disabled")
+                                 fg="white", disabledforeground="#909090",
+                                 font=("Consolas", 10), width=14, state="disabled")
         self.btn_rec.pack(side="left", padx=4, pady=2)
         r1 = tk.Frame(btns, bg="#1e1e1e"); r1.pack()
         tk.Button(r1, text="Take screenshot", command=self.shot, bg="#2d5a6a", fg="white",
