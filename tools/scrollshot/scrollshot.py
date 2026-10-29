@@ -271,9 +271,13 @@ class Panel:
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
+        foot = tk.Frame(self.root, bg="#1e1e1e")
+        foot.pack(fill="x", padx=10, pady=(4, 14))
         short = self.folder.replace(os.path.expanduser("~"), "~")
-        tk.Label(self.root, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
-                 font=("Consolas", 8), anchor="w").pack(fill="x", padx=10, pady=(4, 14))
+        tk.Label(foot, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
+                 font=("Consolas", 8), anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Button(foot, text="↻", command=self.reload, bg="#3d3d3d", fg="#a0d0a0",
+                  font=("Consolas", 9), width=2, relief="flat").pack(side="right")
         def _cbexc(exc, val, tb):
             import traceback
             log("callback error:\n" + "".join(traceback.format_exception(exc, val, tb)))
@@ -507,6 +511,12 @@ class Panel:
             self._st = "Path copied to clipboard"; self._render()
         except Exception as e:
             log(f"copy path: {e}")
+
+    def reload(self):
+        import sys, subprocess
+        log("reload")
+        subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+        self.root.after(200, self.root.destroy)
 
     def cancel(self):
         self.cancel_flag.set()
