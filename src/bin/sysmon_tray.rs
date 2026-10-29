@@ -656,6 +656,27 @@ fn parse_cdx(path: &std::path::Path) -> Option<i32> {
 
 fn read_cdx() -> Option<i32> {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
+    // fresh cache written by codex_ping.ps1 (cheap direct API ping)
+    let cache = format!("{home}\\.codex\\limits_cache.json");
+    if let Ok(md) = std::fs::metadata(&cache) {
+        let fresh = md.modified().ok().and_then(|m| m.elapsed().ok()).map_or(false, |e| e.as_secs() < 900);
+        if fresh {
+            if let Ok(txt) = std::fs::read_to_string(&cache) {
+                let num = |key: &str| -> Option<String> {
+                    let i = txt.find(key)? + key.len();
+                    Some(txt[i..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect())
+                };
+                if let Some(p) = num("\"primary_used\":") {
+                    if let Some(f) = p.parse::<f64>().ok() {
+                        if let Some(r) = num("\"primary_reset\":").and_then(|v| v.parse::<i64>().ok()) {
+                            CDX_RESET.store(r, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        return Some(f.round() as i32);
+                    }
+                }
+            }
+        }
+    }
     let cands = [
         format!("{home}\\.codex\\sessions"),
         r"\\wsl.localhost\Ubuntu\home\therceman\.codex\sessions".to_string(),
