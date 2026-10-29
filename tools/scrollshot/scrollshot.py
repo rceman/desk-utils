@@ -56,28 +56,71 @@ def grab(zone):
     return np.array(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
 
 
-def row_sig(img):
+def sig2(img, cols=32):
+    """Row signatures: downsample width to `cols` blocks -> (h, cols) float array."""
     g = img.mean(axis=2)
-    return g.mean(axis=1)
+    h, w = g.shape
+    cols = max(4, min(cols, w))
+    step = max(1, w // cols)
+    usable = cols * step
+    g2 = g[:, :usable].reshape(h, cols, step).mean(axis=2)
+    return g2
 
 
-def find_shift(prev_sig, new_sig):
-    """Return s (px) such that prev[s:] matches new[:len-s]."""
+def find_shift(prev_sig, new_sig, verify=None):
+    """Find s>0 so that prev_sig[s:] ~= new_sig[:h-s]. Returns (s, score)."""
     h = len(prev_sig)
     lo = int(h * MIN_OVERLAP)
     best_s, best_score = 0, float("inf")
     for s in range(1, h - lo + 1):
         a = prev_sig[s:]
         b = new_sig[:len(a)]
-        score = np.abs(a - b).mean()
+        score = float(np.abs(a - b).mean())
         if score < best_score:
             best_score, best_s = score, s
+    if verify is not None and best_s > 0:
+        full = verify(best_s)
+        if full is not None:
+            return best_s, full
     return best_s, best_score
+
+
+def full_score(prev_img, new_img, s, rows_step=4):
+    """Full-resolution MSE over the overlap, sampled rows (robust vs false positives)."""
+    h = prev_img.shape[0]
+    a = prev_img[s:h:rows_step].astype(np.int16)
+    b = new_img[:h - s:rows_step].astype(np.int16)
+    n = min(len(a), len(b))
+    if n == 0:
+        return None
+    return float(np.abs(a[:n] - b[:n]).mean())
+
+
+def best_shift(prev_img, new_img):
+    ps, ns = sig2(prev_img), sig2(new_img)
+    s, score = find_shift(ps, ns, verify=lambda s: full_score(prev_img, new_img, s))
+    return s, score
+
+
+def contains(canvas_img, new_img, tail_rows=None):
+    """True if new_img already appears in the bottom part of canvas (duplicate content)."""
+    ch = canvas_img.shape[0]
+    nh = new_img.shape[0]
+    if nh >= ch:
+        return False
+    lo = max(0, ch - nh - 200)
+    ns = sig2(new_img)
+    cs = sig2(canvas_img[lo:])
+    best, best_score = None, float("inf")
+    for off in range(0, len(cs) - len(ns) + 1):
+        d = float(np.abs(cs[off:off + len(ns)] - ns).mean())
+        if d < best_score:
+            best_score, best = d, off
+    return best_score < MSE_LIMIT
 
 
 def run_capture(zone, out_path):
     frames = [grab(zone)]
-    sigs = [row_sig(frames[0])]
     print(f"zone={zone} first frame {frames[0].shape[1]}x{frames[0].shape[0]}", flush=True)
 
     state = {"pending": False, "stop": False, "idle": 0}
@@ -99,11 +142,10 @@ def run_capture(zone, out_path):
             time.sleep(SETTLE_MS / 1000.0)
             state["pending"] = False
             new = grab(zone)
-            s, score = find_shift(sigs[-1], row_sig(new))
+            s, score = best_shift(frames[-1], new)
             changed = score < MSE_LIMIT and s > 0
             if changed:
                 frames.append(new)
-                sigs.append(row_sig(new))
                 state["idle"] = 0
                 print(f"+ frame {len(frames)}  shift={s}px  score={score:.2f}", flush=True)
             else:
@@ -116,16 +158,24 @@ def run_capture(zone, out_path):
     finally:
         listener.stop()
 
-    # stitch
+    # stitch: append only the genuinely new bottom part, skip duplicates
     base = frames[0]
     parts = [base]
     total = base.shape[0]
+    canvas_so_far = base
     for i in range(1, len(frames)):
-        s, _ = find_shift(sigs[i - 1], sigs[i])
+        s, _ = best_shift(frames[i - 1], frames[i])
         if s <= 0:
             continue
-        parts.append(frames[i][base.shape[0] - s:])
+        new_part = frames[i][base.shape[0] - s:]
+        if new_part.shape[0] == 0:
+            continue
+        if contains(canvas_so_far, frames[i]):
+            print(f"skip duplicate frame {i + 1}", flush=True)
+            continue
+        parts.append(new_part)
         total += s
+        canvas_so_far = frames[i]
     canvas = np.zeros((total, base.shape[1], 3), dtype=np.uint8)
     y = 0
     for p in parts:
@@ -142,14 +192,29 @@ def selftest():
     tall = (rng.random((1200, 200, 3)) * 255).astype(np.uint8)
     tall[::40] = 30  # horizontal "text" lines
     frames = [tall[i:i + 400].copy() for i in range(0, 800, 120)]
-    sigs = [row_sig(f) for f in frames]
     shifts = []
     for i in range(1, len(frames)):
-        s, sc = find_shift(sigs[i - 1], sigs[i])
+        s, sc = best_shift(frames[i - 1], frames[i])
         shifts.append((s, round(float(sc), 2)))
     print("expected shift=120 for each step:", shifts)
     assert all(abs(s - 120) <= 1 for s, _ in shifts), "shift detection failed"
-    print("selftest OK")
+    # stitch and compare with the original tall image
+    parts = [frames[0]]
+    total = frames[0].shape[0]
+    for i in range(1, len(frames)):
+        s, _ = best_shift(frames[i - 1], frames[i])
+        parts.append(frames[i][frames[0].shape[0] - s:])
+        total += s
+    canvas = np.zeros((total, frames[0].shape[1], 3), dtype=np.uint8)
+    y = 0
+    for p in parts:
+        canvas[y:y + p.shape[0]] = p
+        y += p.shape[0]
+    ref = tall[:total]
+    diff = float(np.abs(canvas.astype(np.int16) - ref.astype(np.int16)).mean())
+    print(f"stitched {canvas.shape} vs original {ref.shape} diff={diff:.3f}")
+    assert diff < 1.0, "stitching produced mismatched content"
+    print("selftest OK (no duplicated content)")
 
 
 def main():
