@@ -40,6 +40,18 @@ def grab(zone):
     return np.array(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
 
 
+def settled_frame(zone, tries=6):
+    """Return a stable grab: two consecutive captures must be pixel-identical-ish.
+    Discards mid-repaint frames so anchor/matcher never see partial content."""
+    for _ in range(tries):
+        a = grab(zone)
+        time.sleep(0.08)
+        b = grab(zone)
+        if float(np.abs(a.astype(np.float32) - b.astype(np.float32)).mean()) < 2.0:
+            return b
+    return None
+
+
 def find_dy(prev, new):
     """Signed vertical shift: >0 down, <0 up, 0 = no motion."""
     ga = prev.astype(np.float32)
@@ -592,8 +604,6 @@ class Panel:
             self._st = "Recording"; self._render()
         else:
             self.stop_flag.set()
-            if self.border:
-                self.border.locked = False
             self.btn_rec.config(state="disabled")
             self._st = "Stopping…"; self._render()
 
@@ -603,14 +613,12 @@ class Panel:
             return
         if self.border:
             self.border.win.withdraw()
+            self.root.update_idletasks()
+            time.sleep(0.05)  # let compositor drop the overlay
         try:
             zone = select_zone(self.root, min_h=20)
-        finally:
-            if self.border:
-                self.border.win.deiconify()
-        if zone is None:
-            return
-        try:
+            if zone is None:
+                return
             img = grab(zone)
             dest = self._new_path()
             Image.fromarray(img).save(dest)
@@ -664,6 +672,8 @@ class Panel:
                     self.show(payload)
                 elif kind == "btn":
                     self.recording = False
+                    if self.border:
+                        self.border.locked = False
                     self.btn_rec.config(text="Start", bg="#2d6a2d", state="normal" if self.zone else "disabled")
         except queue.Empty:
             pass
@@ -845,6 +855,7 @@ class Panel:
             anchor = None
             pos = top = cap_h = 0
             frames = scrolls = 0
+            wheeled = False
             self.put("status", "Recording")
             last_new = time.monotonic()
             last_tick = None
@@ -857,10 +868,15 @@ class Panel:
                             u = ctypes.windll.user32
                             u.SetCursorPos(zone[0] + zone[2] // 2, zone[1] + zone[3] // 2)
                             u.mouse_event(0x0800, 0, 0, -120, 0)
+                            wheeled = True
                         except Exception as e:
                             log(f"autoscroll: {e}")
                     t0 = time.monotonic()
-                    f = grab(zone)
+                    need_settle = canvas is None or wheeled
+                    f = settled_frame(zone) if need_settle else grab(zone)
+                    wheeled = False
+                    if f is None:
+                        continue  # frame never settled; skip, don't touch anchor/pos/chunks
                     frames += 1
                     fh = f.shape[0]
                     if canvas is None:

@@ -47,10 +47,15 @@ def sha256(path):
 
 
 def procs(name):
-    """[(pid, cmdline)] for processes named <name> (with/without .exe)."""
+    """[(pid, cmdline)] for processes named <name> (with/without .exe).
+    Raises RuntimeError on discovery failure — empty result only means truly none."""
     n = name.rsplit(".", 1)[0] if "." in name else name
-    out = ps(f"Get-CimInstance Win32_Process -Filter \"Name='{n}.exe'\" "
-             "| Select ProcessId,CommandLine | ConvertTo-Json -Compress", check=False)
+    r = subprocess.run(PS + [f"Get-CimInstance Win32_Process -Filter \"Name='{n}.exe'\" "
+                             "-ErrorAction Stop | Select ProcessId,CommandLine | ConvertTo-Json -Compress"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"process discovery failed for {name}: {r.stderr.strip()[:200]}")
+    out = (r.stdout or "").strip()
     if not out or out == "null":
         return []
     import json
@@ -63,21 +68,29 @@ def procs(name):
     return [(int(r["ProcessId"]), r.get("CommandLine") or "") for r in rows]
 
 
-def kill_matching(name, cmd_substr):
-    """Kill only processes whose CommandLine contains cmd_substr."""
+def match_cmdline(cmd, exact):
+    """True if cmd's CommandLine refers to the exact canonical path.
+    Quote/case tolerant; never matches other checkouts with the same basename."""
+    e = exact.lower().replace("/", "\\")
+    c = cmd.lower().replace("/", "\\").strip().strip('"')
+    return c == e or c.startswith(e + " ") or c.startswith(e + '"') or (e + '"') in c
+
+
+def kill_matching(name, exact_path):
+    """Kill only processes whose CommandLine resolves to exact_path."""
     killed = []
     for pid, cmd in procs(name):
-        if cmd_substr.lower() in cmd.lower():
+        if match_cmdline(cmd, exact_path):
             ps(f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue", check=False)
             killed.append(pid)
     return killed
 
 
-def wait_gone(name, cmd_substr="", timeout=10):
+def wait_gone(name, exact_path="", timeout=10):
     """Wait until no matching process remains; return True if gone."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not [p for p, c in procs(name) if cmd_substr.lower() in c.lower()]:
+        if not [p for p, c in procs(name) if match_cmdline(c, exact_path) if exact_path]:
             return True
         time.sleep(0.4)
     return False

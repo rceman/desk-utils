@@ -59,7 +59,10 @@ def main():
         if sha256(tmp) != sha256(EXE):
             fail("hash mismatch after staging")
         os.replace(tmp, DST)
-        shutil.copy2(MANIFEST, os.path.join("/mnt/c/Tools/diskhound", "diskhound.exe.manifest"))
+        try:
+            shutil.copy2(MANIFEST, os.path.join("/mnt/c/Tools/diskhound", "diskhound.exe.manifest"))
+        except OSError as e:
+            info(f"warn: loose manifest copy failed ({e}) — embedded manifest still present if mt ran")
         info(f"published -> {DST_WIN} (sha {sha256(DST)[:12]})")
 
         if launch:

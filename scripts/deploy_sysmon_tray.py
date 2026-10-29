@@ -26,30 +26,54 @@ def sync_src():
     shutil.copytree(REPO, STAGE, ignore=ignore)
 
 
-def diag_for(pid, timeout=12):
-    """Last pawnio diag lines for <pid>, waiting up to <timeout>s for any."""
+import re
+
+def diag_lines_after(offset):
+    try:
+        with open(DIAG_WSL, "rb") as f:
+            f.seek(offset)
+            return f.read().decode(errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def wait_ready(pid, offset, timeout=20):
+    """Wait for a VALID thermal sample for the exact pid — 'msr=' with hr=0 ret>=1.
+    'ready'/'open hr=0' are progress, not success. Errors surface immediately."""
+    tok = re.compile(rf"\bpid={pid}\b")
     deadline = time.time() + timeout
+    seen = []
     while time.time() < deadline:
-        try:
-            tail = open(DIAG_WSL).read()
-        except OSError:
-            tail = ""
-        lines = [l for l in tail.strip().splitlines() if f"pid={pid}" in l]
-        if lines:
-            return lines
-        time.sleep(0.5)
-    return []
+        lines = [l for l in diag_lines_after(offset) if tok.search(l)]
+        for l in lines:
+            if l not in seen:
+                seen.append(l)
+        if any("0x80070005" in l or "ACCESS" in l.upper() for l in lines):
+            return "access_denied", seen
+        if any("missing export" in l or "LoadLibrary failed" in l for l in lines):
+            return "init_failed", seen
+        if any("msr=" in l and "hr=0x00000000" in l and "ret=1" in l for l in lines):
+            return "ready", seen
+        time.sleep(0.6)
+    return "timeout", seen
+
+
+def diag_offset():
+    try:
+        return os.path.getsize(DIAG_WSL)
+    except OSError:
+        return 0
 
 
 def launch(elevated):
     ps(f"Start-Process '{DST_WIN}'" + (" -Verb RunAs" if elevated else ""))
 
 
-def wait_pid(timeout=12):
+def wait_pid(exclude=(), timeout=12):
     deadline = time.time() + timeout
     while time.time() < deadline:
         for pid, cmd in procs("sysmon_tray"):
-            if MATCH.lower() in cmd.lower():
+            if pid not in exclude and cmd.lower().replace('"', "") == MATCH.lower():
                 return pid
         time.sleep(0.5)
     return None
@@ -78,28 +102,30 @@ def main():
         os.replace(tmp, DST)
         info(f"published -> {DST_WIN} (sha {sha256(DST)[:12]})")
 
+        before = {p for p, _ in procs("sysmon_tray")}
         for attempt in range(2):
+            mark = diag_offset()
             launch(elevated)
-            pid = wait_pid()
+            pid = wait_pid(exclude=before)
             if not pid:
                 fail("no new sysmon_tray process after launch")
             info(f"UP pid={pid} (elevated={elevated})")
-            lines = diag_for(pid)
-            joined = " | ".join(lines[-3:]) if lines else "no diag"
-            info(f"pawnio: {joined}")
-            if any("ready" in l or "msr=" in l for l in lines):
-                info("pawnio ready — CPU temp verified")
+            status, lines = wait_ready(pid, mark)
+            info(f"pawnio[{status}]: {' | '.join(lines[-3:]) or 'no diag'}")
+            if status == "ready":
+                info("CPU temp verified (valid MSR sample)")
                 return
-            if any("0x80070005" in l or "ACCESS" in l.upper() for l in lines):
+            if status == "access_denied":
                 if elevated:
                     fail("pawnio open ACCESS_DENIED even elevated")
                 info("pawnio needs elevation — relaunching via UAC")
                 elevated = True
                 kill_matching("sysmon_tray", MATCH)
-                wait_gone("sysmon_tray", MATCH, timeout=10)
+                if not wait_gone("sysmon_tray", MATCH, timeout=10):
+                    fail("old instance still running before elevated relaunch")
+                before.add(pid)
                 continue
-            # exports/driver failed for another reason — surface it, don't claim OK
-            fail(f"pawnio not ready: {joined}")
+            fail(f"pawnio not ready: {status}")
         fail("pawnio did not become ready")
     finally:
         unlock()
