@@ -155,10 +155,8 @@ class Border:
         cv.bind("<ButtonPress-1>", self._gstart)
         cv.bind("<B1-Motion>", self._gmove)
         c = "#0d3320"
-        cv.create_polygon([(15, 3), (10, 9), (20, 9)], fill=c, outline="")
-        cv.create_polygon([(15, 27), (10, 21), (20, 21)], fill=c, outline="")
-        cv.create_polygon([(3, 15), (9, 10), (9, 20)], fill=c, outline="")
-        cv.create_polygon([(27, 15), (21, 10), (21, 20)], fill=c, outline="")
+        cv.create_line(15, 7, 15, 23, fill=c, width=3)
+        cv.create_line(7, 15, 23, 15, fill=c, width=3)
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
