@@ -126,24 +126,26 @@ def set_dark_title(root, dark):
 class Border:
     def __init__(self, tk, zone):
         x, y, w, h = zone
-        self.win = tk.Toplevel()
-        self.win.overrideredirect(True)
-        self.win.attributes("-topmost", True)
-        try:
-            self.win.attributes("-transparentcolor", "#ff00ff")
-        except Exception:
-            pass
-        self.win.configure(bg="#ff00ff")
-        self.win.geometry(f"{w + 8}x{h + 8}+{x - 4}+{y - 4}")
-        cv = tk.Canvas(self.win, bg="#ff00ff", highlightthickness=0)
-        cv.pack(fill="both", expand=True)
-        cv.create_rectangle(3, 3, w + 5, h + 5, outline="#00ff88", width=3)
+        t = 4
+        self.wins = []
+        for bx, by, bw, bh in [(x - t, y - t, w + 2 * t, t),
+                               (x - t, y + h, w + 2 * t, t),
+                               (x - t, y, t, h),
+                               (x + w, y, t, h)]:
+            win = tk.Toplevel()
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.configure(bg="#00ff88")
+            win.geometry(f"{bw}x{bh}+{bx}+{by}")
+            self.wins.append(win)
 
     def close(self):
-        try:
-            self.win.destroy()
-        except Exception:
-            pass
+        for w in self.wins:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        self.wins = []
 
 
 class Panel:
@@ -164,19 +166,19 @@ class Panel:
         self.root.resizable(False, False)
         self.status = tk.StringVar(value="Press Start to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
-                 font=("Consolas", 10), justify="left", wraplength=340, height=2,
+                 font=("Consolas", 10), justify="left", wraplength=360, height=2,
                  anchor="nw").pack(padx=10, pady=(10, 4), anchor="w", fill="x")
         self.info = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
                  font=("Consolas", 9), height=1, anchor="w").pack(padx=10, anchor="w", fill="x")
-        self.view = tk.Canvas(self.root, bg="#111111", width=330, height=250, highlightthickness=0)
+        self.view = tk.Canvas(self.root, bg="#111111", width=360, height=260, highlightthickness=0)
         self.view.pack(padx=10, pady=8)
         global LOG_PATH
         self.folder = os.path.dirname(out_path)
         os.makedirs(self.folder, exist_ok=True)
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
         tk.Label(self.root, text=f"Save to: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
-                 font=("Consolas", 8), wraplength=340, justify="left").pack(padx=10, anchor="w")
+                 font=("Consolas", 8), wraplength=360, justify="left").pack(padx=10, anchor="w")
         self.dark = tk.BooleanVar(value=True)
         row = tk.Frame(self.root, bg="#1e1e1e")
         row.pack(pady=(6, 0))
@@ -185,17 +187,21 @@ class Panel:
                        activebackground="#1e1e1e", activeforeground="#ffffff",
                        font=("Consolas", 9)).pack(side="left")
         btns = tk.Frame(self.root, bg="#1e1e1e")
-        btns.pack(pady=4)
-        self.btn_start = tk.Button(btns, text="Start", command=self.start_rec, bg="#2d6a2d", fg="white",
-                                   font=("Consolas", 10), width=8)
-        self.btn_start.pack(side="left", padx=4)
-        self.btn_stop = tk.Button(btns, text="Stop & Save", command=self.finish, bg="#4a4a2d", fg="white",
-                                  font=("Consolas", 10), width=12, state="disabled")
-        self.btn_stop.pack(side="left", padx=4)
-        tk.Button(btns, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
-                  font=("Consolas", 10), width=8).pack(side="left", padx=4)
-        tk.Button(btns, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
-                  font=("Consolas", 10), width=11).pack(side="left", padx=4)
+        btns.pack(pady=4, fill="x")
+        r1 = tk.Frame(btns, bg="#1e1e1e")
+        r1.pack()
+        self.btn_start = tk.Button(r1, text="Start", command=self.start_rec, bg="#2d6a2d", fg="white",
+                                   font=("Consolas", 10), width=14)
+        self.btn_start.pack(side="left", padx=4, pady=2)
+        self.btn_stop = tk.Button(r1, text="Stop & Save", command=self.finish, bg="#4a4a2d", fg="white",
+                                  font=("Consolas", 10), width=14, state="disabled")
+        self.btn_stop.pack(side="left", padx=4, pady=2)
+        r2 = tk.Frame(btns, bg="#1e1e1e")
+        r2.pack()
+        tk.Button(r2, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        tk.Button(r2, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -207,7 +213,7 @@ class Panel:
         import tkinter as tk
         x, y, w, h = zone
         r = tk.Tk(); sw, sh = r.winfo_screenwidth(), r.winfo_screenheight(); r.destroy()
-        pw, ph = 380, 520
+        pw, ph = 400, 560
         for cx, cy in [(x + w + 12, y), (x - pw - 12, y), (x, y + h + 12), (x, y - ph - 12),
                        (sw - pw - 12, 12), (12, 12), (sw - pw - 12, sh - ph - 12), (12, sh - ph - 12)]:
             cx, cy = max(0, min(cx, sw - pw)), max(0, min(cy, sh - ph))
@@ -255,11 +261,11 @@ class Panel:
         try:
             img = Image.fromarray(arr)
             w, h = img.size
-            s = min(330 / w, 250 / h, 1.0)
+            s = min(360 / w, 260 / h, 1.0)
             if s < 1.0:
                 img = img.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
-            if img.height > 250:
-                img = img.crop((0, img.height - 250, img.width, img.height))
+            if img.height > 260:
+                img = img.crop((0, img.height - 260, img.width, img.height))
             self.photo = ImageTk.PhotoImage(img)
             self.view.delete("all")
             self.view.create_image(0, 0, anchor="nw", image=self.photo)
