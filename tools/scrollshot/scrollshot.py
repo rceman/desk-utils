@@ -162,7 +162,7 @@ class Panel:
         self.start_flag = threading.Event()
         self.q = queue.Queue()
         self.root = tk.Tk()
-        self.root.title("ScrollShot")
+        self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
         self.root.geometry(self._place(zone))
@@ -258,6 +258,10 @@ class Panel:
                     self.info.set(payload)
                 elif kind == "preview":
                     self.show(payload)
+                elif kind == "btn":
+                    if payload == "start_on":
+                        self.btn_start.config(state="normal")
+                        self.btn_stop.config(state="disabled")
         except queue.Empty:
             pass
         except Exception as e:
@@ -315,101 +319,93 @@ class Panel:
         self.root.after(200, self.root.destroy)
 
     def record_loop(self):
-        chunks = []          # bottom-appended rows
-        top_chunks = []      # prepended rows (scroll above start)
-        canvas = None
-        anchor = None        # last frame with accepted motion
-        pos = 0              # doc position of anchor top
-        top = 0              # doc top of captured region
-        cap_h = 0            # doc height of captured region
-        frames = 0
-        while not self.start_flag.is_set():
-            if self.stop_flag.is_set() or self.cancel_flag.is_set():
-                return
-            time.sleep(0.05)
-        self.put("status", "Recording")
-        last_new = time.monotonic()
-        try:
-            while not self.stop_flag.is_set():
-                t0 = time.monotonic()
-                f = grab(self.zone)
-                frames += 1
-                fh = f.shape[0]
-                if canvas is None:
-                    canvas = f
-                    anchor = f
-                    cap_h = fh
-                    self.put("preview", canvas)
-                    self.put("info", f"zone {self.zone[2]}x{self.zone[3]}  recording…")
-                else:
-                    dy, score = find_dy(anchor, f)
-                    log(f"frame {frames}: dy={dy} score={score:.1f} pos={pos}")
-                    if dy:
-                        anchor = f
-                        last_new = time.monotonic()
-                        new_pos = pos + dy
-                        if new_pos < top:
-                            n = min(top - new_pos, fh)
-                            top_chunks.insert(0, f[:n].copy())
-                            top, cap_h = new_pos, cap_h + n
-                            log(f"prepend {n} rows top={top}")
-                        elif new_pos + fh > top + cap_h:
-                            start_r = top + cap_h - new_pos
-                            chunks.append(f[start_r:].copy())
-                            cap_h += fh - start_r
-                            log(f"append {fh - start_r} rows cap_h={cap_h}")
-                        else:
-                            log("frame covered")
-                        pos = new_pos
-                        total = cap_h
-                        self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-2:]]))
-                        self.put("info", f"frames: {frames}  dy: {dy}  total {total}px")
-                left = IDLE_SEC - (time.monotonic() - last_new)
-                self.put("status", f"Recording · auto-save in {max(0, int(left + 0.999))}s")
-                if left <= 0:
-                    log("idle stop")
-                    break
-                dt = 1.0 / FPS - (time.monotonic() - t0)
-                if dt > 0:
-                    time.sleep(dt)
-        except Exception as e:
-            import traceback
-            log(f"record error: {e}\n{traceback.format_exc()}")
-            self.put("status", f"error: {e}")
-            self.put("info", "recording failed — nothing saved")
-            self.border.close()
-            return
-        if self.cancel_flag.is_set():
-            log("cancelled")
-            return
-        if canvas is None:
-            return
-        if chunks or top_chunks:
+        while not self.cancel_flag.is_set():
+            # ---- wait for Start ----
+            while not self.start_flag.is_set():
+                if self.cancel_flag.is_set():
+                    return
+                time.sleep(0.05)
+            # ---- one recording session ----
+            chunks, top_chunks = [], []
+            canvas = None
+            anchor = None
+            pos = top = cap_h = 0
+            frames = scrolls = 0
+            self.put("status", "Recording")
+            last_new = time.monotonic()
             try:
-                canvas = np.vstack([*top_chunks, canvas, *chunks])
+                while not self.stop_flag.is_set():
+                    t0 = time.monotonic()
+                    f = grab(self.zone)
+                    frames += 1
+                    fh = f.shape[0]
+                    if canvas is None:
+                        canvas = f
+                        anchor = f
+                        cap_h = fh
+                        self.put("preview", canvas)
+                    else:
+                        dy, score = find_dy(anchor, f)
+                        if dy:
+                            anchor = f
+                            scrolls += 1
+                            last_new = time.monotonic()
+                            new_pos = pos + dy
+                            if new_pos < top:
+                                n = min(top - new_pos, fh)
+                                top_chunks.insert(0, f[:n].copy())
+                                top, cap_h = new_pos, cap_h + n
+                            elif new_pos + fh > top + cap_h:
+                                st = top + cap_h - new_pos
+                                chunks.append(f[st:].copy())
+                                cap_h += fh - st
+                            pos = new_pos
+                            self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-2:]]))
+                            self.put("info", f"frames {frames} · scrolls {scrolls} · {cap_h}px")
+                    left = IDLE_SEC - (time.monotonic() - last_new)
+                    self.put("status", f"Recording · auto-save in {max(0, int(left + 0.999))}s")
+                    if left <= 0:
+                        log("idle stop")
+                        break
+                    dt = 1.0 / FPS - (time.monotonic() - t0)
+                    if dt > 0:
+                        time.sleep(dt)
             except Exception as e:
-                log(f"final concat error: {e}")
-                self.put("status", f"save error: {e}")
+                import traceback
+                log(f"record error: {e}\n{traceback.format_exc()}")
+                self.put("status", f"error: {e}")
+                self.put("info", "failed — nothing saved")
+                self.border.close()
                 return
-        if self.cancel_flag.is_set():
-            log("cancelled before save")
-            return
-        try:
-            tmp = self.out_path + ".tmp.png"
-            Image.fromarray(canvas).save(tmp)
             if self.cancel_flag.is_set():
-                os.remove(tmp)
-                log("cancelled during save")
+                log("cancelled")
                 return
-            os.replace(tmp, self.out_path)
-            log(f"saved {self.out_path} {canvas.shape}")
-            self.put("preview", canvas)
-            self.put("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
-            self.put("info", f"frames: {frames}  → {self.out_path}")
-        except Exception as e:
-            import traceback
-            log(f"save error: {e}\n{traceback.format_exc()}")
-            self.put("status", f"save error: {e}")
+            # ---- save ----
+            if canvas is not None:
+                if chunks or top_chunks:
+                    try:
+                        canvas = np.vstack([*top_chunks, canvas, *chunks])
+                    except Exception as e:
+                        log(f"concat error: {e}")
+                if self.cancel_flag.is_set():
+                    return
+                try:
+                    tmp = self.out_path + ".tmp.png"
+                    Image.fromarray(canvas).save(tmp)
+                    os.replace(tmp, self.out_path)
+                    log(f"saved {self.out_path} {canvas.shape}")
+                    self.put("preview", canvas)
+                    self.put("status", "Screenshot saved")
+                    self.put("info", f"frames {frames} · scrolls {scrolls} · {canvas.shape[0]}px")
+                except Exception as e:
+                    log(f"save error: {e}")
+                    self.put("status", f"save error: {e}")
+            # ---- reset for next session ----
+            self.start_flag.clear()
+            self.stop_flag.clear()
+            self.put("btn", "start_on")
+            self.put("status", "Screenshot saved — Start for next")
+        return
 
 
 def selftest():
