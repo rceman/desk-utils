@@ -560,10 +560,10 @@ fn init_pawnio() {
             pawnio_diag(&format!("LoadLibrary failed: {}", GetLastError()));
             return;
         }
-        let o = GetProcAddress(m, b"pawnio_open\0".as_ptr());
-        let l = GetProcAddress(m, b"pawnio_load\0".as_ptr());
-        let e = GetProcAddress(m, b"pawnio_execute\0".as_ptr());
-        let c = GetProcAddress(m, b"pawnio_close\0".as_ptr());
+        let o = GetProcAddress(m, c"pawnio_open".as_ptr().cast());
+        let l = GetProcAddress(m, c"pawnio_load".as_ptr().cast());
+        let e = GetProcAddress(m, c"pawnio_execute".as_ptr().cast());
+        let c = GetProcAddress(m, c"pawnio_close".as_ptr().cast());
         if o.is_null() || l.is_null() || e.is_null() || c.is_null() {
             pawnio_diag(&format!("missing export: open={o:p} load={l:p} exec={e:p} close={c:p}"));
             return;
