@@ -277,7 +277,10 @@ class Panel:
 
     def open_folder(self):
         try:
-            os.startfile(self.folder)
+            if os.path.exists(self.out_path):
+                os.startfile(f'explorer.exe /select,"{self.out_path}"')
+            else:
+                os.startfile(self.folder)
         except Exception as e:
             log(f"open folder: {e}")
 
