@@ -215,6 +215,11 @@ class Panel:
         short = self.folder.replace(os.path.expanduser("~"), "~")
         tk.Label(self.root, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
                  font=("Consolas", 8), anchor="w").pack(fill="x", padx=10, pady=(4, 14))
+        def _cbexc(exc, val, tb):
+            import traceback
+            log("callback error:\n" + "".join(traceback.format_exception(exc, val, tb)))
+            self.status.set("error — see log")
+        self.root.report_callback_exception = _cbexc
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -232,6 +237,9 @@ class Panel:
             self.status.set("select failed — see log")
 
     def _select_area(self):
+        if self.recording:
+            self.status.set("Finish recording first")
+            return
         zone = select_zone(self.root)
         if zone is None:
             return
@@ -259,6 +267,7 @@ class Panel:
             cx, cy = max(0, min(cx, sw - pw)), max(0, min(cy, sh - ph))
             if not intersects(cx, cy, pw, ph, zone):
                 return f"{pw}x{ph}+{cx}+{cy}"
+        log("no safe placement — panel may overlap zone")
         return f"{pw}x{ph}+{max(0, sw - pw - 12)}+12"
 
     def _sys_dark(self):
@@ -289,8 +298,8 @@ class Panel:
             self.status.set("Recording")
         else:
             self.stop_flag.set()
-            self.recording = False
-            self.btn_rec.config(text="Start", bg="#2d6a2d")
+            self.btn_rec.config(state="disabled")
+            self.status.set("Stopping…")
 
     def shot(self):
         if not self.zone:
@@ -309,7 +318,13 @@ class Panel:
             self.status.set(f"shot error: {e}")
 
     def _new_path(self):
-        return os.path.join(self.folder, f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}.png")
+        base = f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}_{datetime.datetime.now().microsecond//1000:03d}"
+        path = os.path.join(self.folder, f"{base}.png")
+        n = 0
+        while os.path.exists(path):
+            n += 1
+            path = os.path.join(self.folder, f"{base}_{n}.png")
+        return path
 
     def poll(self):
         try:
@@ -323,7 +338,7 @@ class Panel:
                     self.show(payload)
                 elif kind == "btn":
                     self.recording = False
-                    self.btn_rec.config(text="Start", bg="#2d6a2d", state="normal")
+                    self.btn_rec.config(text="Start", bg="#2d6a2d", state="normal" if self.zone else "disabled")
         except queue.Empty:
             pass
         self.root.after(80, self.poll)
@@ -359,8 +374,9 @@ class Panel:
                 self.status.set("Nothing to copy yet")
                 return
             import subprocess
+            q = self.out_path.replace("'", "''")
             ps = ('Add-Type -AssemblyName System.Drawing,System.Windows.Forms;'
-                  f'$img=[System.Drawing.Image]::FromFile("{self.out_path}");'
+                  f"$img=[System.Drawing.Image]::FromFile('{q}');"
                   '[System.Windows.Forms.Clipboard]::SetImage($img);$img.Dispose()')
             subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
                              creationflags=0x08000000)
@@ -449,25 +465,33 @@ class Panel:
                 log("cancelled")
                 return
             if canvas is not None:
+                ok = True
                 if chunks or top_chunks:
                     try:
                         canvas = np.vstack([*top_chunks, canvas, *chunks])
                     except Exception as e:
                         log(f"concat error: {e}")
+                        self.put("status", f"concat error — session lost")
+                        ok = False
                 if self.cancel_flag.is_set():
                     return
-                try:
-                    self.out_path = self._new_path()
-                    tmp = self.out_path + ".tmp.png"
-                    Image.fromarray(canvas).save(tmp)
-                    os.replace(tmp, self.out_path)
-                    log(f"saved {self.out_path} {canvas.shape}")
-                    self.put("preview", canvas)
-                    self.put("status", "Screenshot saved — Start for next")
-                    self.put("info", f"frames {frames} · scrolls {scrolls} · {canvas.shape[0]}px")
-                except Exception as e:
-                    log(f"save error: {e}")
-                    self.put("status", f"save error: {e}")
+                if ok:
+                    try:
+                        dest = self._new_path()
+                        tmp = dest + ".tmp.png"
+                        Image.fromarray(canvas).save(tmp)
+                        if self.cancel_flag.is_set():
+                            os.remove(tmp)
+                            return
+                        os.replace(tmp, dest)
+                        self.out_path = dest
+                        log(f"saved {dest} {canvas.shape}")
+                        self.put("preview", canvas)
+                        self.put("status", "Screenshot saved — Start for next")
+                        self.put("info", f"frames {frames} · scrolls {scrolls} · {canvas.shape[0]}px")
+                    except Exception as e:
+                        log(f"save error: {e}")
+                        self.put("status", f"save error: {e}")
             self.start_flag.clear()
             self.stop_flag.clear()
             self.put("btn", "start")
