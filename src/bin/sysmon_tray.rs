@@ -146,6 +146,7 @@ static RAM_TOTAL_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 static POPUP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static POPUP_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static POPUP_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static CDX_RESET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static PDH_C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -167,6 +168,11 @@ struct MemoryStatus {
 struct FileTime {
     lo: u32,
     hi: u32,
+}
+#[repr(C)]
+struct SystemTime {
+    year: u16, month: u16, dow: u16, day: u16,
+    hour: u16, minute: u16, second: u16, ms: u16,
 }
 #[repr(C)]
 struct PdhValue {
@@ -250,6 +256,7 @@ unsafe extern "system" {
     fn GetCurrentThread() -> isize;
     fn SetThreadAffinityMask(h: isize, mask: usize) -> usize;
     fn GetTickCount64() -> u64;
+    fn FileTimeToSystemTime(ft: *const FileTime, st: *mut SystemTime) -> i32;
 }
 #[link(name = "pdh")]
 unsafe extern "system" {
@@ -637,6 +644,13 @@ fn parse_cdx(path: &std::path::Path) -> Option<i32> {
     let key = "\"primary\":{\"used_percent\":";
     let p = tail.find(key)? + key.len();
     let num: String = tail[p..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    // resets_at for the same primary window
+    if let Some(r) = tail[p..].find("\"resets_at\":") {
+        let rs: String = tail[p + r + 12..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(v) = rs.parse::<i64>() {
+            CDX_RESET.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     num.parse::<f64>().ok().map(|v| v.round() as i32)
 }
 
@@ -975,6 +989,20 @@ fn open_settings(owner: HWND) {
     }
 }
 
+fn local_hhmm(epoch: i64) -> String {
+    unsafe {
+        let ft = FileTime {
+            lo: (((epoch + 11644473600) * 10_000_000) & 0xFFFF_FFFF) as u32,
+            hi: ((((epoch + 11644473600) as u128 * 10_000_000) >> 32) & 0xFFFF_FFFF) as u32,
+        };
+        let mut st = SystemTime { year: 0, month: 0, dow: 0, day: 0, hour: 0, minute: 0, second: 0, ms: 0 };
+        if FileTimeToSystemTime(&ft, &mut st) != 0 {
+            return format!("{:02}:{:02}", st.hour, st.minute);
+        }
+    }
+    "--:--".into()
+}
+
 fn popup_lines() -> Vec<String> {
     use std::sync::atomic::Ordering::Relaxed;
     let (cu, cs) = (CPU_USER.load(Relaxed), CPU_SYS.load(Relaxed));
@@ -998,7 +1026,11 @@ fn popup_lines() -> Vec<String> {
     v.push(format!("CPU Temp: {}{}", if ct >= 0 { format!("{} °C", ct) } else { "—".into() },
         if gp >= 0 { format!(" GPU: {}% {}", gp, if gt >= 0 { format!("{} °C", gt) } else { String::new() }) } else { String::new() }));
     let c = CDX_PCT.load(Relaxed);
-    v.push(format!("Codex 5h: {}", if c >= 0 { format!("{}% left", 100 - c) } else { "—".into() }));
+    let cr = CDX_RESET.load(Relaxed);
+    v.push(format!("Codex 5h: {}", if c >= 0 {
+        if cr > 0 { format!("{}% left, resets {}", 100 - c, local_hhmm(cr)) } else { format!("{}% left", 100 - c) }
+    } else { "—".into() }));
+    v.push("Devin weekly: —".to_string());
     v
 }
 
