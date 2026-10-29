@@ -415,7 +415,7 @@ def selftest():
     tall[::30] = 30
     h = 400
     for step in (8, 25, 90, 200):
-        pos, frames = 0, []
+        pos, frames = 0, [tall[:h].copy()]
         for i in range(14):
             pos += step
             frames.append(tall[pos:pos + h].copy())
