@@ -167,19 +167,16 @@ class Panel:
         self.root.title("ScrollShot")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
-        self.root.update_idletasks()
-        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        self.root.geometry(f"+{max(0, sw - 420)}+{max(0, sh - 620)}")
         self.root.resizable(False, False)
         self.status = tk.StringVar(value="Select Area to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
-                 font=("Consolas", 10), justify="left", wraplength=360, height=2,
-                 anchor="nw").pack(padx=10, pady=(10, 4), anchor="w", fill="x")
+                 font=("Consolas", 9), justify="center", wraplength=360, height=1,
+                 anchor="center").pack(padx=10, pady=(10, 0), fill="x")
         self.info = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
-                 font=("Consolas", 9), height=1, anchor="w").pack(padx=10, anchor="w", fill="x")
-        self.view = tk.Canvas(self.root, bg="#111111", width=360, height=240, highlightthickness=0)
-        self.view.pack(padx=10, pady=8)
+                 font=("Consolas", 8), height=1, anchor="center", justify="center").pack(padx=10, fill="x")
+        self.view = tk.Canvas(self.root, bg="#111111", width=360, height=200, highlightthickness=0)
+        self.view.pack(padx=10, pady=6)
         global LOG_PATH
         self.folder = out_dir
         os.makedirs(self.folder, exist_ok=True)
@@ -220,6 +217,10 @@ class Panel:
             log("callback error:\n" + "".join(traceback.format_exception(exc, val, tb)))
             self.status.set("error — see log")
         self.root.report_callback_exception = _cbexc
+        self.root.update_idletasks()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        pw, ph = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
+        self.root.geometry(f"+{max(0, sw - pw)}+{max(0, sh - ph - 100)}")
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -353,14 +354,14 @@ class Panel:
         try:
             img = Image.fromarray(arr)
             w, h = img.size
-            s = min(360 / w, 240 / h, 1.0)
+            s = min(360 / w, 200 / h, 1.0)
             if s < 1.0:
                 img = img.resize((int(w * s), int(h * s)), Image.BILINEAR)
-            if img.height > 240:
-                img = img.crop((0, img.height - 240, img.width, img.height))
+            if img.height > 200:
+                img = img.crop((0, img.height - 200, img.width, img.height))
             self.photo = ImageTk.PhotoImage(img)
             self.view.delete("all")
-            self.view.create_image(180, 120, image=self.photo)
+            self.view.create_image(180, 100, image=self.photo)
         except Exception as e:
             log(f"show error: {e}")
 
