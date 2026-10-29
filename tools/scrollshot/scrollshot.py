@@ -242,6 +242,13 @@ class Panel:
             return
         zone = select_zone(self.root)
         if zone is None:
+            # cancelled -> clear current zone, Start disabled again
+            self.zone = None
+            self.root.title("ScrollShot")
+            self.btn_rec.config(state="disabled")
+            self.apply_border()
+            self.status.set("Select Area to begin")
+            log("zone cleared")
             return
         self.zone = zone
         self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
