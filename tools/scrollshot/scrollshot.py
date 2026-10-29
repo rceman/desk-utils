@@ -149,7 +149,15 @@ class Border:
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
-        self.grip.configure(bg="#ffcc00", cursor="fleur")
+        self.grip.configure(cursor="fleur")
+        cv = tk.Canvas(self.grip, width=22, height=22, bg="#ffcc00", highlightthickness=0,
+                       cursor="fleur")
+        cv.pack()
+        cv.bind("<ButtonPress-1>", self._gstart)
+        cv.bind("<B1-Motion>", self._gmove)
+        c = "#333333"
+        for x0, y0, x1, y1 in [(11, 3, 11, 19), (3, 11, 19, 11)]:
+            cv.create_line(x0, y0, x1, y1, fill=c, width=2, arrow="both", arrowshape=(5, 5, 2))
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
