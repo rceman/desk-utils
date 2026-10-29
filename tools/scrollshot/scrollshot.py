@@ -209,6 +209,8 @@ class Panel:
         r3.pack()
         tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        tk.Button(r3, text="Copy path", command=self.copy_path, bg="#3d3d3d", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -285,8 +287,9 @@ class Panel:
 
     def open_folder(self):
         try:
+            import subprocess
             if os.path.exists(self.out_path):
-                os.startfile(f'explorer.exe /select,"{self.out_path}"')
+                subprocess.Popen(["explorer.exe", f"/select,{self.out_path}"])
             else:
                 os.startfile(self.folder)
         except Exception as e:
@@ -304,10 +307,16 @@ class Panel:
             import subprocess
             subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
                              creationflags=0x08000000)
-            self.put("status", f"Copied {os.path.basename(path)} to clipboard")
+            self.put("status", "Image copied to clipboard")
             log(f"copy {path}")
         except Exception as e:
             log(f"copy error: {e}")
+
+    def copy_path(self):
+        path = self.out_path if os.path.exists(self.out_path) else self.folder
+        self.root.clipboard_clear()
+        self.root.clipboard_append(path)
+        self.put("status", "Path copied to clipboard")
 
     def finish(self):
         self.stop_flag.set()
@@ -345,6 +354,9 @@ class Panel:
                         cap_h = fh
                         self.put("preview", canvas)
                     else:
+                        if frames % 5 == 0:
+                            tail = canvas[-200:] if not chunks else np.vstack([canvas[-200:], *chunks[-2:]])
+                            self.put("preview", tail)
                         dy, score = find_dy(anchor, f)
                         if dy:
                             anchor = f
