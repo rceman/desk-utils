@@ -403,6 +403,7 @@ class Panel:
         self.scroll_iv = 1.0
         self.auto_scroll = tk.BooleanVar(value=False)
         self.prtscr = tk.BooleanVar(value=False)
+        self._prtscr_flag = False
         self.copy_as_path = tk.BooleanVar(value=True)
         row = tk.Frame(self.root, bg="#1e1e1e")
         row.pack(anchor="w", padx=10)
@@ -446,8 +447,8 @@ class Panel:
                           ("screenshot → path", self.copy_as_path)]:
             tk.Checkbutton(r4, text=text, variable=var, bg="#1e1e1e", fg="#d0d0d0",
                            selectcolor="#333333", activebackground="#1e1e1e",
-                           activeforeground="#ffffff",
-                           font=("Consolas", 8)).pack(side="left", padx=4)
+                           activeforeground="#ffffff", font=("Consolas", 8),
+                           command=self._sync_flags).pack(side="left", padx=4)
         foot = tk.Frame(self.root, bg="#1e1e1e")
         foot.pack(fill="x", padx=10, pady=(4, 14))
         short = self.folder.replace(os.path.expanduser("~"), "~")
@@ -626,6 +627,8 @@ class Panel:
                     self._render()
                 elif kind == "rec":
                     self.rec.set(payload)
+                elif kind == "shot":
+                    self.shot()
                 elif kind == "preview":
                     self.show(payload)
                 elif kind == "btn":
@@ -698,6 +701,9 @@ class Panel:
         subprocess.Popen([sys.executable, os.path.abspath(__file__)])
         self.root.after(200, self.root.destroy)
 
+    def _sync_flags(self):
+        self._prtscr_flag = self.prtscr.get()
+
     def _prtscr_hook(self):
         import ctypes
         from ctypes import wintypes
@@ -711,9 +717,9 @@ class Panel:
         CB = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
         def proc(nc, wp, lp):
-            if wp in (0x100, 0x101) and self.prtscr.get():
+            if wp == 0x100 and self._prtscr_flag:
                 if ctypes.cast(lp, ctypes.POINTER(KB)).contents.vk == 0x2C:
-                    self.root.after(0, self.shot)
+                    self.put("shot", None)
                     return 1
             return u.CallNextHookEx(None, nc, wp, lp)
 
