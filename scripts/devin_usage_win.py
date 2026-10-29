@@ -1,4 +1,4 @@
-import time, os, threading, re, json, datetime, sys
+import time, os, threading, re, json, datetime, sys, subprocess
 from winpty import PtyProcess
 
 EXE = os.path.expandvars(r"%LOCALAPPDATA%\devin\cli\bin\devin.exe")
@@ -27,6 +27,11 @@ p.write("/usage"); time.sleep(0.7); p.write("\r"); time.sleep(0.7); p.write("\r"
 time.sleep(8)
 try:
     p.terminate()
+except Exception:
+    pass
+# guarantee no orphaned CLI process (it keeps keepalive pings alive)
+try:
+    subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, timeout=15)
 except Exception:
     pass
 
