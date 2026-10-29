@@ -207,9 +207,9 @@ class Panel:
 
 
         r3 = tk.Frame(btns, bg="#1e1e1e"); r3.pack()
-        tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
+        tk.Button(r3, text="Copy image path", command=self.copy_path, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
-        tk.Button(r3, text="Copy path", command=self.copy_path, bg="#3d3d3d", fg="white",
+        tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         short = self.folder.replace(os.path.expanduser("~"), "~")
         tk.Label(self.root, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
