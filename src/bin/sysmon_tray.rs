@@ -980,7 +980,7 @@ fn popup_lines() -> Vec<String> {
     let (ru, rt) = (RAM_USED_DG.load(Relaxed), RAM_TOTAL_DG.load(Relaxed));
     let gb = |dg: u32| dg as f64 / 10.0;
     let mut v = vec![
-        format!("CPU: {}%   (user {}%, sys {})", CPU_PCT.load(Relaxed), cu, cs),
+        format!("CPU: {}% (user {}%, sys {}%)", CPU_PCT.load(Relaxed), cu, cs),
         format!("RAM: {:.1} / {:.1} GB used, {:.1} GB free", gb(ru), gb(rt), gb(rt.saturating_sub(ru))),
     ];
     for (lbl, path) in [("C:/", "C:\\"), ("W:/", "W:\\")] {
@@ -995,7 +995,7 @@ fn popup_lines() -> Vec<String> {
     }
     let (ct, gt, gp) = (CPU_TEMP.load(Relaxed), GPU_TEMP.load(Relaxed), GPU_PCT.load(Relaxed));
     v.push(format!("CPU Temp: {}{}", if ct >= 0 { format!("{} °C", ct) } else { "—".into() },
-        if gp >= 0 { format!("   GPU: {}% {}", gp, if gt >= 0 { format!("{} °C", gt) } else { String::new() }) } else { String::new() }));
+        if gp >= 0 { format!(" GPU: {}% {}", gp, if gt >= 0 { format!("{} °C", gt) } else { String::new() }) } else { String::new() }));
     let c = CDX_PCT.load(Relaxed);
     v.push(format!("Codex 5h: {}", if c >= 0 { format!("{}% left", 100 - c) } else { "—".into() }));
     v
@@ -1055,7 +1055,22 @@ fn toggle_popup() {
         let lines = popup_lines();
         if let Ok(mut g) = POPUP_LINES.lock() { *g = lines.clone(); }
         let hgt = 8 * 2 + lines.len() as i32 * 22 + 4;
-        let wd = 330;
+        // width = longest line measured with the same font
+        let wd = {
+            let dc = GetDC(ph);
+            let font = CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, wide("Consolas").as_ptr());
+            let old = SelectObject(dc, font);
+            let mut mx = 200i32;
+            for ln in &lines {
+                let mut r = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+                DrawTextW(dc, wide(ln).as_ptr(), -1, &mut r, 0x400 /*DT_CALCRECT*/ | 0x10);
+                mx = mx.max(r.right + 24);
+            }
+            SelectObject(dc, old);
+            DeleteObject(font);
+            ReleaseDC(ph, dc);
+            mx.min(900)
+        };
         // position above the widget
         if let (Some((wx, wy, _, _)), wh) = (widget_rect(), WIDGET_HWND.load(Relaxed) as HWND) {
             let _ = wh;
