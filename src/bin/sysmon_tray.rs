@@ -659,7 +659,7 @@ fn read_cdx() -> Option<i32> {
     // fresh cache written by codex_ping.ps1 (cheap direct API ping)
     let cache = format!("{home}\\.codex\\limits_cache.json");
     if let Ok(md) = std::fs::metadata(&cache) {
-        let fresh = md.modified().ok().and_then(|m| m.elapsed().ok()).map_or(false, |e| e.as_secs() < 900);
+        let fresh = md.modified().ok().and_then(|m| m.elapsed().ok()).map_or(false, |e| e.as_secs() < 2400);
         if fresh {
             if let Ok(txt) = std::fs::read_to_string(&cache) {
                 let num = |key: &str| -> Option<String> {
