@@ -276,9 +276,9 @@ class Panel:
 
 
         r3 = tk.Frame(btns, bg="#1e1e1e"); r3.pack()
-        tk.Button(r3, text="Copy image path", command=self.copy_path, bg="#3d3d3d", fg="white",
-                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
+                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
+        tk.Button(r3, text="Copy image path", command=self.copy_path, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         foot = tk.Frame(self.root, bg="#1e1e1e")
         foot.pack(fill="x", padx=10, pady=(4, 14))
@@ -433,7 +433,7 @@ class Panel:
             self._st = "Screenshot saved"; self._render()
             self._inf = f"{img.shape[1]}x{img.shape[0]}"; self._render()
             log(f"shot saved {self.out_path}")
-            self.copy_image()
+            self.copy_path()
         except Exception as e:
             log(f"shot error: {e}")
             self._st = f"shot error: {e}"; self._render()
