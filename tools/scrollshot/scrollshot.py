@@ -151,7 +151,7 @@ class Border:
         self.grip.attributes("-topmost", True)
         self.grip.configure(cursor="fleur")
         lb = tk.Label(self.grip, text="✥", bg="#ffcc00", fg="#333333",
-                      font=("Segoe UI Symbol", 11, "bold"), cursor="fleur")
+                      font=("Segoe UI Symbol", 14, "bold"), cursor="fleur")
         lb.pack(fill="both", expand=True)
         lb.bind("<ButtonPress-1>", self._gstart)
         lb.bind("<B1-Motion>", self._gmove)
@@ -167,7 +167,7 @@ class Border:
                  (x - t, y, t, h), (x + w, y, t, h)]
         for win, (bx, by, bw, bh) in zip(self.wins, geoms):
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
-        self.grip.geometry(f"22x22+{x + w + t - 5}+{y - t - 17}")
+        self.grip.geometry(f"26x26+{x + w + t - 5}+{y - t - 19}")
 
     def _move(self, edge, rx, ry):
         x, y, w, h = self.zone
