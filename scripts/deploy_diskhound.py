@@ -68,9 +68,21 @@ def main():
             info(f"warn: loose manifest staging failed ({e}) — embedded manifest present")
         if sha256(tmp) != sha256(EXE):
             fail("hash mismatch after staging")
-        os.replace(tmp, DST)
-        if man_tmp:
-            os.replace(man_tmp, man_dst)
+        bak = DST + ".bak"; man_bak = man_dst + ".bak"
+        try:
+            if os.path.exists(DST):
+                shutil.copy2(DST, bak)
+            if os.path.exists(man_dst):
+                shutil.copy2(man_dst, man_bak)
+            if man_tmp:
+                os.replace(man_tmp, man_dst)
+            os.replace(tmp, DST)
+        except OSError as e:
+            if os.path.exists(bak):
+                shutil.copy2(bak, DST)
+            if os.path.exists(man_bak):
+                shutil.copy2(man_bak, man_dst)
+            fail(f"publish failed ({e}) — previous release restored")
         info(f"published -> {DST_WIN} (sha {sha256(DST)[:12]})")
 
         if launch:

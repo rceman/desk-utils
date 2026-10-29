@@ -864,6 +864,9 @@ class Panel:
             last_tick = None
             try:
                 while not self.stop_flag.is_set():
+                    if time.monotonic() - last_new >= IDLE_SEC:
+                        log("idle stop")
+                        break
                     if last_tick is not None and not wheeled and self._auto_flag and time.monotonic() - last_tick >= self.scroll_iv:
                         last_tick = time.monotonic()
                         try:
@@ -911,9 +914,6 @@ class Panel:
                             self.put("info", f"{frames}f · {scrolls}s · {cap_h}px")
                     left = IDLE_SEC - (time.monotonic() - last_new)
                     self.put("rec", f"auto-save in {max(0, int(left + 0.999))}s")
-                    if left <= 0:
-                        log("idle stop")
-                        break
                     dt = 1.0 / FPS - (time.monotonic() - t0)
                     if dt > 0:
                         time.sleep(dt)

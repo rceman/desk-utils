@@ -74,7 +74,8 @@ def match_cmdline(cmd, exact):
     e = exact.lower().replace("/", "\\")
     c = cmd.lower().replace("/", "\\").strip().strip('"')
     if e.endswith(".py"):
-        return c.endswith(e) or c.endswith(e + '"')  # script must be the last arg
+        # script must be the last arg AND directly follow a python interpreter
+        return bool(re.search(r'pythonw?\.exe"?\s+"?' + re.escape(e) + r'"?$', c))
     return c == e or c.startswith(e + " ") or c.startswith(e + '"') or (e + '"') in c
 
 
