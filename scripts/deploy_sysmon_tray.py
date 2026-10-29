@@ -54,10 +54,7 @@ def wait_ready(pid, offset, timeout=20):
             return "init_failed", seen
         if any("cpu_temp_ready" in l for l in lines):
             return "ready", seen
-        ok = [l for l in lines if "msr=0x19C" in l and "hr=0x00000000" in l
-              and "ret=1" in l and re.search(r"raw=0x8[0-9a-fA-F]{7}", l)]
-        if ok:
-            return "ready", seen
+
         time.sleep(0.6)
     return "timeout", seen
 
