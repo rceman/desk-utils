@@ -153,12 +153,12 @@ class Panel:
         r0 = tk.Frame(btns, bg="#1e1e1e"); r0.pack()
         tk.Button(r0, text="Select Area", command=self.select_area, bg="#4a2d6a", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
-        tk.Button(r0, text="Take screenshot", command=self.shot, bg="#2d5a6a", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
-        r1 = tk.Frame(btns, bg="#1e1e1e"); r1.pack()
-        self.btn_rec = tk.Button(r1, text="Start", command=self.toggle_rec, bg="#2d6a2d",
+        self.btn_rec = tk.Button(r0, text="Start", command=self.toggle_rec, bg="#2d6a2d",
                                  fg="white", font=("Consolas", 10), width=14, state="disabled")
         self.btn_rec.pack(side="left", padx=4, pady=2)
+        r1 = tk.Frame(btns, bg="#1e1e1e"); r1.pack()
+        tk.Button(r1, text="Take screenshot", command=self.shot, bg="#2d5a6a", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
 
 
         r3 = tk.Frame(btns, bg="#1e1e1e"); r3.pack()
@@ -168,7 +168,8 @@ class Panel:
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         foot = tk.Frame(self.root, bg="#1e1e1e")
         foot.pack(fill="x", padx=10, pady=(2, 8))
-        tk.Label(foot, text=f"Folder: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
+        short = self.folder.replace(os.path.expanduser("~"), "~")
+        tk.Label(foot, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
                  font=("Consolas", 8), anchor="w").pack(side="left", fill="x", expand=True)
         tk.Button(foot, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
                   font=("Consolas", 9), width=11).pack(side="right")
@@ -210,7 +211,19 @@ class Panel:
                 return f"{pw}x{ph}+{cx}+{cy}"
         return f"{pw}x{ph}+{max(0, sw - pw - 12)}+12"
 
+    def _sys_dark(self):
+        try:
+            import winreg
+            v = winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
+                "AppsUseLightTheme")[0]
+            return v == 0
+        except Exception:
+            return True
+
     def start(self):
+        self.root.update_idletasks()
+        self.root.after(150, lambda: set_dark_title(self.root, self._sys_dark()))
         self.worker.start()
         self.root.after(80, self.poll)
         self.root.mainloop()
