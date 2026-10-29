@@ -185,12 +185,18 @@ class Panel:
         os.makedirs(self.folder, exist_ok=True)
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
 
+        self.auto_scroll = tk.BooleanVar(value=False)
+        row = tk.Frame(self.root, bg="#1e1e1e")
+        row.pack(anchor="w", padx=10)
+        tk.Checkbutton(row, text="Auto scroll", variable=self.auto_scroll, bg="#1e1e1e",
+                       fg="#d0d0d0", selectcolor="#333333", activebackground="#1e1e1e",
+                       activeforeground="#ffffff", font=("Consolas", 9)).pack(side="left")
         self.border_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(self.root, text="Show border", variable=self.border_var,
+        tk.Checkbutton(row, text="Show border", variable=self.border_var,
                        command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
                        selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff",
-                       font=("Consolas", 9)).pack(anchor="w", padx=10)
+                       font=("Consolas", 9)).pack(side="left", padx=8)
         btns = tk.Frame(self.root, bg="#1e1e1e")
         btns.pack(pady=(4, 6), fill="x")
         r0 = tk.Frame(btns, bg="#1e1e1e"); r0.pack()
@@ -225,6 +231,7 @@ class Panel:
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         pw, ph = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
         self.root.geometry(f"+{max(0, sw - pw)}+{max(0, sh - ph - 150)}")
+        self.root.bind("<Escape>", lambda e: self.toggle_rec() if self.recording else None)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -389,6 +396,9 @@ class Panel:
         try:
             img = Image.fromarray(arr)
             w, h = img.size
+            if h > 1200:
+                img = img.crop((0, h - 1200, w, h))
+                w, h = img.size
             s = min(360 / w, 200 / h, 1.0)
             if s < 1.0:
                 img = img.resize((max(1, int(w * s)), max(1, int(h * s))), Image.BILINEAR)
@@ -457,8 +467,18 @@ class Panel:
             frames = scrolls = 0
             self.put("status", "Recording")
             last_new = time.monotonic()
+            last_tick = 0.0
             try:
                 while not self.stop_flag.is_set():
+                    if self.auto_scroll.get() and time.monotonic() - last_tick >= 1.0:
+                        last_tick = time.monotonic()
+                        try:
+                            import ctypes
+                            u = ctypes.windll.user32
+                            u.SetCursorPos(zone[0] + zone[2] // 2, zone[1] + zone[3] // 2)
+                            u.mouse_event(0x0800, 0, 0, -120, 0)
+                        except Exception as e:
+                            log(f"autoscroll: {e}")
                     t0 = time.monotonic()
                     f = grab(zone)
                     frames += 1
@@ -484,7 +504,7 @@ class Panel:
                                 chunks.append(f[st:].copy())
                                 cap_h += fh - st
                             pos = new_pos
-                            self.put("info", f"frames {frames} · scrolls {scrolls} · {cap_h}px")
+                            self.put("info", f"{frames}f · {scrolls}s · {cap_h}px")
                     left = IDLE_SEC - (time.monotonic() - last_new)
                     self.put("rec", f"auto-save in {max(0, int(left + 0.999))}s")
                     if left <= 0:
@@ -529,8 +549,8 @@ class Panel:
                         self.out_path = dest
                         log(f"saved {dest} {canvas.shape}")
                         self.put("preview", canvas)
-                        self.put("status", "Screenshot saved — Start for next")
-                        self.put("info", f"frames {frames} · scrolls {scrolls} · {canvas.shape[0]}px")
+                        self.put("status", "Saved — Start again")
+                        self.put("info", f"{frames}f · {scrolls}s · {canvas.shape[0]}px")
                     except Exception as e:
                         log(f"save error: {e}")
                         self.put("status", f"save error: {e}")
