@@ -1289,7 +1289,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 AppendMenuW(m, MF_STRING, ID_OPEN, wide("Open diskhound").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_OPEN_ADMIN, wide("Open as administrator").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
-                AppendMenuW(m, MF_STRING, ID_SCROLL, wide("Scroll Screen").as_ptr());
+                AppendMenuW(m, MF_STRING, ID_SCROLL, wide("Open ScrollShot").as_ptr());
                 let wf = if WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed) { MF_CHECKED } else { 0 };
                 AppendMenuW(m, wf, ID_WIDGET, wide("Taskbar widget").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_EXIT, wide("Exit").as_ptr());

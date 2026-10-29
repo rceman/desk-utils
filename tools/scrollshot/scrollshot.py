@@ -126,7 +126,9 @@ class Panel:
         self.root.title("ScrollShot")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
-        self.root.geometry("+60+60")
+        self.root.update_idletasks()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        self.root.geometry(f"+{max(0, sw - 420)}+{max(0, sh - 620)}")
         self.root.resizable(False, False)
         self.status = tk.StringVar(value="Select Area to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
