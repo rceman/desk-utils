@@ -1068,7 +1068,7 @@ fn popup_lines() -> Vec<String> {
     let acct = field("\"acct\":");
     let sec = CDX_SEC.load(Relaxed);
     v.push(format!("Codex [{}]: {}{}", acct, if c >= 0 {
-        if cr > 0 { format!("{}% 5h, resets {}", 100 - c, local_hhmm(cr)) } else { format!("{}% 5h", 100 - c) }
+        if cr > 0 { format!("{}% 5h ({})", 100 - c, local_hhmm(cr)) } else { format!("{}% 5h", 100 - c) }
     } else { "— 5h".into() },
         if sec >= 0 { format!(" {}% weekly", 100 - sec) } else { String::new() }));
     v.push("Devin [main]: — weekly".to_string());
