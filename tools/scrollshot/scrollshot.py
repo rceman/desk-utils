@@ -132,20 +132,47 @@ def set_dark_title(root, dark):
 
 
 class Border:
-    def __init__(self, tk, zone):
-        x, y, w, h = zone
-        t = 4
+    T = 6
+
+    def __init__(self, tk, zone, on_change=None):
+        self.zone = list(zone)
+        self.on_change = on_change or (lambda z: None)
         self.wins = []
-        for bx, by, bw, bh in [(x - t, y - t, w + 2 * t, t),
-                               (x - t, y + h, w + 2 * t, t),
-                               (x - t, y, t, h),
-                               (x + w, y, t, h)]:
+        for edge, cur in [("top", "sb_v_double_arrow"), ("bottom", "sb_v_double_arrow"),
+                          ("left", "sb_h_double_arrow"), ("right", "sb_h_double_arrow")]:
             win = tk.Toplevel()
             win.overrideredirect(True)
             win.attributes("-topmost", True)
-            win.configure(bg="#00ff88")
-            win.geometry(f"{bw}x{bh}+{bx}+{by}")
+            win.configure(bg="#00ff88", cursor=cur)
+            win.bind("<B1-Motion>", lambda e, ed=edge: self._move(ed, e.x_root, e.y_root))
             self.wins.append(win)
+        self.layout()
+
+    def layout(self):
+        x, y, w, h = self.zone
+        t = self.T
+        geoms = [(x - t, y - t, w + 2 * t, t), (x - t, y + h, w + 2 * t, t),
+                 (x - t, y, t, h), (x + w, y, t, h)]
+        for win, (bx, by, bw, bh) in zip(self.wins, geoms):
+            win.geometry(f"{bw}x{bh}+{bx}+{by}")
+
+    def _move(self, edge, rx, ry):
+        x, y, w, h = self.zone
+        if edge == "top":
+            ny = min(ry, y + h - 100)
+            h += y - ny
+            y = ny
+        elif edge == "bottom":
+            h = max(100, ry - y)
+        elif edge == "left":
+            nx = min(rx, x + w - 30)
+            w += x - nx
+            x = nx
+        elif edge == "right":
+            w = max(30, rx - x)
+        self.zone = [x, y, w, h]
+        self.layout()
+        self.on_change(tuple(self.zone))
 
     def close(self):
         for w in self.wins:
@@ -263,6 +290,10 @@ class Panel:
         else:
             self.select_area()
 
+    def _zone_changed(self, z):
+        self.zone = z
+        self.root.title(f"ScrollShot  {z[2]}x{z[3]}")
+
     def select_area(self):
         try:
             self._select_area()
@@ -299,7 +330,7 @@ class Panel:
             self.border.close()
             self.border = None
         if self.border_var.get() and self.zone:
-            self.border = Border(self.tk, self.zone)
+            self.border = Border(self.tk, self.zone, self._zone_changed)
 
     def _place(self, zone):
         x, y, w, h = zone
