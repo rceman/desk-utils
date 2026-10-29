@@ -29,22 +29,39 @@ def grab(zone):
 
 
 def find_dy(prev, new):
+    """Signed vertical shift: >0 content moved down, <0 moved up, 0 = no motion."""
     ga = prev.mean(axis=2)
     gb = new.mean(axis=2)
     pa, pb = ga.mean(axis=1), gb.mean(axis=1)
     h = len(pa)
-    best_dy, best = 0, float("inf")
-    for dy in range(MIN_DY, min(MAX_DY, h - 60)):
-        score = float(np.abs(pa[dy:] - pb[:h - dy]).mean())
-        if score < best:
-            best, best_dy = score, dy
-    if best_dy and best < THRESH:
-        a = ga[best_dy:h:7].astype(np.int16)
-        b = gb[:h - best_dy:7].astype(np.int16)
+    if h < 120:
+        return 0, 999.0
+    if float(pa.std()) < 1.5 or float(pb.std()) < 1.5:
+        return 0, 999.0
+    base = float(np.abs(pa - pb).mean())
+    cands = []
+    lim = min(MAX_DY, h - 60)
+    for dy in list(range(MIN_DY, lim + 1)) + list(range(-MIN_DY, -lim - 1, -1)):
+        if dy > 0:
+            score = float(np.abs(pa[dy:] - pb[:h - dy]).mean())
+        else:
+            d = -dy
+            score = float(np.abs(pa[:h - d] - pb[d:]).mean())
+        cands.append((score, dy))
+    cands.sort()
+    for score, dy in cands[:3]:
+        if score > THRESH or score >= base * 0.75:
+            continue
+        if dy > 0:
+            a = ga[dy:h:7].astype(np.int16); b = gb[:h - dy:7].astype(np.int16)
+        else:
+            d = -dy
+            a = ga[:h - d:7].astype(np.int16); b = gb[d:h:7].astype(np.int16)
         n = min(len(a), len(b))
-        if n and float(np.abs(a[:n] - b[:n]).mean()) < THRESH:
-            return best_dy, best
-    return 0, best
+        v = float(np.abs(a[:n] - b[:n]).mean())
+        if v < THRESH and v < base * 0.75:
+            return dy, v
+    return 0, base
 
 
 def select_zone():
@@ -83,9 +100,16 @@ def intersects(px, py, pw, ph, zone):
 
 def set_dark_title(root, dark):
     try:
-        hwnd = ctypes.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+        from ctypes import wintypes
+        user32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
         v = ctypes.c_int(1 if dark else 0)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), ctypes.sizeof(v))
+        hr = dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), ctypes.sizeof(v))
+        log(f"dark title {dark} hwnd={hwnd} hr={hr}")
     except Exception as e:
         log(f"dark title error: {e}")
 
@@ -154,8 +178,9 @@ class Panel:
         self.btn_start = tk.Button(btns, text="Start", command=self.start_rec, bg="#2d6a2d", fg="white",
                                    font=("Consolas", 10), width=8)
         self.btn_start.pack(side="left", padx=4)
-        tk.Button(btns, text="Stop & Save", command=self.finish, bg="#4a4a2d", fg="white",
-                  font=("Consolas", 10), width=12).pack(side="left", padx=4)
+        self.btn_stop = tk.Button(btns, text="Stop & Save", command=self.finish, bg="#4a4a2d", fg="white",
+                                  font=("Consolas", 10), width=12, state="disabled")
+        self.btn_stop.pack(side="left", padx=4)
         tk.Button(btns, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
                   font=("Consolas", 10), width=8).pack(side="left", padx=4)
         tk.Button(btns, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
@@ -186,7 +211,8 @@ class Panel:
         set_dark_title(self.root, self.dark.get())
 
     def start(self):
-        self.apply_dark()
+        self.root.update_idletasks()
+        self.root.after(120, self.apply_dark)
         self.worker.start()
         self.root.after(80, self.poll)
         self.root.mainloop()
@@ -195,7 +221,9 @@ class Panel:
         if not self.start_flag.is_set():
             self.start_flag.set()
             self.btn_start.config(state="disabled")
-            self.put("status", "Recording")
+            self.btn_stop.config(state="normal")
+            self.status.set("Recording")
+        last_new = time.monotonic()
 
     def poll(self):
         try:
@@ -244,11 +272,13 @@ class Panel:
         self.root.after(200, self.root.destroy)
 
     def record_loop(self):
+        chunks = []
         canvas = None
         prev = None
         frames = 0
-        last_new = time.monotonic()
         scrolled = False
+        pos = 0
+        captured_h = 0
         while not self.start_flag.is_set():
             if self.stop_flag.is_set() or self.cancel_flag.is_set():
                 return
@@ -261,41 +291,68 @@ class Panel:
                 frames += 1
                 if canvas is None:
                     canvas = f
+                    captured_h = f.shape[0]
+                    pos = 0
                     self.put("preview", canvas)
                     self.put("info", f"zone {self.zone[2]}x{self.zone[3]}  recording…")
                 elif prev is not None:
                     dy, score = find_dy(prev, f)
-                    if dy:
-                        canvas = np.vstack([canvas, f[f.shape[0] - dy:]])
-                        last_new = time.monotonic()
-                        scrolled = True
-                        self.put("preview", canvas)
-                        self.put("info", f"frames: {frames}  dy: {dy}  total {canvas.shape[0]}px")
-                        log(f"dy={dy} score={score:.1f} canvas={canvas.shape[0]}")
+                    if dy < 0:
+                        pos = max(0, pos + dy)
+                        log(f"dy={dy} (up) pos={pos}")
+                    elif dy:
+                        new_pos = pos + dy
+                        start = max(0, captured_h - new_pos)
+                        if start < f.shape[0]:
+                            chunks.append(f[start:])
+                            captured_h += f.shape[0] - start
+                            pos = new_pos
+                            last_new = time.monotonic()
+                            scrolled = True
+                            self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-3:]]))
+                            self.put("info", f"frames: {frames}  dy: {dy}  total {captured_h}px")
+                            log(f"dy={dy} pos={pos} start={start} total={captured_h}")
+                        else:
+                            pos = new_pos
+                            log(f"dy={dy} pos={pos} covered -> skip")
                 prev = f
-                if scrolled:
-                    left = IDLE_SEC - (time.monotonic() - last_new)
-                    self.put("status", f"Recording · auto-save in {max(0, left):.0f}s")
-                    if left <= 0:
-                        log("idle stop")
-                        break
+                left = IDLE_SEC - (time.monotonic() - last_new)
+                self.put("status", f"Recording · auto-save in {max(0, int(left + 0.999))}s")
+                if left <= 0:
+                    log("idle stop")
+                    break
                 dt = 1.0 / FPS - (time.monotonic() - t0)
                 if dt > 0:
                     time.sleep(dt)
         except Exception as e:
             log(f"record error: {e}")
             self.put("status", f"error: {e}")
+            self.put("info", "recording failed — nothing saved")
+            self.border.close()
+            return
         if self.cancel_flag.is_set():
             log("cancelled")
             return
         if canvas is None:
             return
+        if chunks:
+            canvas = np.vstack([canvas, *chunks])
+        if self.cancel_flag.is_set():
+            log("cancelled before save")
+            return
         try:
-            Image.fromarray(canvas).save(self.out_path)
+            tmp = self.out_path + ".tmp.png"
+            Image.fromarray(canvas).save(tmp)
+            if self.cancel_flag.is_set():
+                os.remove(tmp)
+                log("cancelled during save")
+                return
+            os.replace(tmp, self.out_path)
             log(f"saved {self.out_path} {canvas.shape}")
             self.put("preview", canvas)
             self.put("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
             self.put("info", f"frames: {frames}  → {self.out_path}")
+            self.border.close()
         except Exception as e:
             log(f"save error: {e}")
             self.put("status", f"save error: {e}")
