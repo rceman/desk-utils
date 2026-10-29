@@ -146,6 +146,15 @@ class Border:
             win.configure(bg="#00ff88", cursor=cur)
             win.bind("<B1-Motion>", lambda e, ed=edge: self._move(ed, e.x_root, e.y_root))
             self.wins.append(win)
+        self.corners = []
+        for corner, cur in [("nw", "sizing nwse"), ("ne", "sizing nesw"),
+                            ("sw", "sizing nesw"), ("se", "sizing nwse")]:
+            win = tk.Toplevel()
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.configure(bg="#00ff88", cursor=cur)
+            win.bind("<B1-Motion>", lambda e, c=corner: self._corner(c, e.x_root, e.y_root))
+            self.corners.append(win)
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
@@ -158,7 +167,7 @@ class Border:
         for pts in [[(48, 4), (38, 18), (58, 18)], [(48, 92), (38, 78), (58, 78)],
                     [(4, 48), (18, 38), (18, 58)], [(92, 48), (78, 38), (78, 58)]]:
             d.polygon(pts, fill=c)
-        img = img.resize((30, 30), Image.LANCZOS)
+        img = img.resize((20, 20), Image.LANCZOS)
         self._grip_photo = ImageTk.PhotoImage(img)
         lb = tk.Label(self.grip, image=self._grip_photo, bd=0, cursor="fleur")
         lb.pack()
@@ -176,7 +185,10 @@ class Border:
                  (x - t, y, t, h), (x + w, y, t, h)]
         for win, (bx, by, bw, bh) in zip(self.wins, geoms):
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
-        self.grip.geometry(f"30x30+{x + w + t - 5}+{y - t - 21}")
+        for win, (bx, by) in zip(self.corners, [(x - t, y - t), (x + w, y - t),
+                                                (x - t, y + h), (x + w, y + h)]):
+            win.geometry(f"{t + 2}x{t + 2}+{bx - 1}+{by - 1}")
+        self.grip.geometry(f"22x22+{x + w + t - 4}+{y - t - 16}")
 
     def _move(self, edge, rx, ry):
         x, y, w, h = self.zone
@@ -196,6 +208,25 @@ class Border:
         self.layout()
         self.on_change(tuple(self.zone))
 
+    def _corner(self, corner, rx, ry):
+        x, y, w, h = self.zone
+        if corner == "nw":
+            nx = min(rx, x + w - 30)
+            ny = min(ry, y + h - 100)
+            w += x - nx; h += y - ny; x, y = nx, ny
+        elif corner == "ne":
+            w = max(30, rx - x)
+            ny = min(ry, y + h - 100); h += y - ny; y = ny
+        elif corner == "sw":
+            nx = min(rx, x + w - 30); w += x - nx; x = nx
+            h = max(100, ry - y)
+        else:
+            w = max(30, rx - x)
+            h = max(100, ry - y)
+        self.zone = [x, y, w, h]
+        self.layout()
+        self.on_change(tuple(self.zone))
+
     def _gstart(self, e):
         self._g = (e.x_root, e.y_root, *self.zone)
 
@@ -206,7 +237,7 @@ class Border:
         self.on_change(tuple(self.zone))
 
     def close(self):
-        for w in self.wins + [self.grip]:
+        for w in self.wins + self.corners + [self.grip]:
             try:
                 w.destroy()
             except Exception:
