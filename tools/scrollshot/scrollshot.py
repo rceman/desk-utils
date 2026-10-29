@@ -244,7 +244,6 @@ class Border:
                 w.destroy()
             except Exception:
                 pass
-        self.wins = []
 
 
 class Panel:
