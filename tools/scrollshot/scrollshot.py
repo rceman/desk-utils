@@ -146,6 +146,13 @@ class Border:
             win.configure(bg="#00ff88", cursor=cur)
             win.bind("<B1-Motion>", lambda e, ed=edge: self._move(ed, e.x_root, e.y_root))
             self.wins.append(win)
+        self.grip = tk.Toplevel()
+        self.grip.overrideredirect(True)
+        self.grip.attributes("-topmost", True)
+        self.grip.configure(bg="#ffcc00", cursor="fleur")
+        self.grip.bind("<ButtonPress-1>", self._gstart)
+        self.grip.bind("<B1-Motion>", self._gmove)
+        self._g = None
         self.layout()
 
     def layout(self):
@@ -155,6 +162,7 @@ class Border:
                  (x - t, y, t, h), (x + w, y, t, h)]
         for win, (bx, by, bw, bh) in zip(self.wins, geoms):
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
+        self.grip.geometry(f"12x12+{x - t - 2}+{y - t - 2}")
 
     def _move(self, edge, rx, ry):
         x, y, w, h = self.zone
@@ -174,8 +182,17 @@ class Border:
         self.layout()
         self.on_change(tuple(self.zone))
 
+    def _gstart(self, e):
+        self._g = (e.x_root, e.y_root, *self.zone)
+
+    def _gmove(self, e):
+        gx, gy, zx, zy, zw, zh = self._g
+        self.zone = [zx + e.x_root - gx, zy + e.y_root - gy, zw, zh]
+        self.layout()
+        self.on_change(tuple(self.zone))
+
     def close(self):
-        for w in self.wins:
+        for w in self.wins + [self.grip]:
             try:
                 w.destroy()
             except Exception:
