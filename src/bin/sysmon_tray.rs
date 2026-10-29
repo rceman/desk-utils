@@ -1397,8 +1397,17 @@ pub fn main() {
         if SetProcessDpiAwarenessContext(-4) == 0 {
             SetProcessDPIAware();
         }
-        CreateMutexW(std::ptr::null_mut(), 1, wide("sysmon-tray-mutex").as_ptr());
-        if GetLastError() == 183 {
+        // retry: on "Restart (admin)" the old instance may still hold the mutex
+        let mut ok = false;
+        for _ in 0..20 {
+            CreateMutexW(std::ptr::null_mut(), 1, wide("sysmon-tray-mutex").as_ptr());
+            if GetLastError() != 183 {
+                ok = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if !ok {
             return; // already running
         }
     }
