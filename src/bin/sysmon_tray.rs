@@ -801,6 +801,7 @@ fn collect_metrics() {
         }
         // CPU temp via PawnIO
         if let Some(t) = cpu_temp() {
+            pawnio_diag(&format!("cpu_temp_ready value={t}"));
             CPU_TEMP.store(t, Relaxed);
         }
         // GPU temp via NVML

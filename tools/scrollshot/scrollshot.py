@@ -877,9 +877,9 @@ class Panel:
                     t0 = time.monotonic()
                     need_settle = canvas is None or wheeled
                     f = settled_frame(zone) if need_settle else grab(zone)
-                    wheeled = False
                     if f is None:
-                        continue  # frame never settled; skip, don't touch anchor/pos/chunks
+                        continue  # stay in settle mode until a stable frame lands
+                    wheeled = False
                     fh = f.shape[0]
                     if canvas is None:
                         canvas, anchor, cap_h = f, f, fh

@@ -46,7 +46,7 @@ non-elevated failure and retries elevated once automatically.
 - **Activate + verify (fresh, never stale):**
   - scrollshot: NEW pythonw PID + `panel ready` appended after deploy offset
   - sysmon_tray: NEW PID by CommandLine + `pawnio` diag checked for its PID —
-    `ready`/`msr=` = OK; `0x80070005` = auto-retry elevated; anything else = FAIL
+    `cpu_temp_ready` (computed temp) = OK; `0x80070005` = auto-retry elevated; anything else = FAIL
   - diskhound: hash-verified publish; `--launch` starts it explicitly
 - **Process discovery errors raise** — a failed WMI/JSON read never becomes
   "no processes" / silent success
