@@ -181,13 +181,14 @@ class Border:
     def layout(self):
         x, y, w, h = self.zone
         t = self.T
-        geoms = [(x - t, y - t, w + 2 * t, t), (x - t, y + h, w + 2 * t, t),
-                 (x - t, y, t, h), (x + w, y, t, h)]
+        geoms = [(x + 14, y - t, w - 28, t), (x + 14, y + h, w - 28, t),
+                 (x - t, y + 14, t, h - 28), (x + w, y + 14, t, h - 28)]
         for win, (bx, by, bw, bh) in zip(self.wins, geoms):
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
         for win, (bx, by) in zip(self.corners, [(x - t, y - t), (x + w, y - t),
                                                 (x - t, y + h), (x + w, y + h)]):
             win.geometry(f"14x14+{bx - 4}+{by - 4}")
+            win.lift()
         self.grip.geometry(f"22x22+{x + w + t - 4}+{y - t - 16}")
 
     def _move(self, edge, rx, ry):
