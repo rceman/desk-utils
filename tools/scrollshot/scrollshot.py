@@ -143,7 +143,7 @@ class Panel:
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
 
         self.border_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(self.root, text="Record Area Border", variable=self.border_var,
+        tk.Checkbutton(self.root, text="Show record area border", variable=self.border_var,
                        command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
                        selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff",
