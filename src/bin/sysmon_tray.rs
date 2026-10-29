@@ -146,6 +146,7 @@ static RAM_TOTAL_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 static POPUP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static POPUP_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static POPUP_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static DVN_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static CDX_SEC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static CDX_RESET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
@@ -656,6 +657,14 @@ fn parse_cdx(path: &std::path::Path) -> Option<i32> {
     num.parse::<f64>().ok().map(|v| v.round() as i32)
 }
 
+fn read_dvn() -> Option<i32> {
+    let home = std::env::var("USERPROFILE").ok()?;
+    let txt = std::fs::read_to_string(format!("{home}\\.devin_usage.json")).ok()?;
+    let i = txt.find("\"weekly_left\":")? + 14;
+    let v: String = txt[i..].trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+    v.parse::<i32>().ok()
+}
+
 fn read_cdx() -> Option<i32> {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     // fresh cache written by codex_ping.ps1 (cheap direct API ping)
@@ -753,6 +762,9 @@ fn collect_metrics() {
                 if let Some(p) = read_cdx() {
                     CDX_PCT.store(p, Relaxed);
                 }
+                if let Some(d) = read_dvn() {
+                    DVN_PCT.store(d, Relaxed);
+                }
             }
         }
         // CPU temp via PawnIO
@@ -839,8 +851,8 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let white = 0x00FF_FFFFu32;
             // usage first, separator, then temps: CPU RAM GPU C:/ W:/ | C° G°
             let sep = 8i32;
-            let cw = ((w - 2 * sep) / 8).max(36); // min column width
-            let cells: [(&str, String, u32); 8] = [
+            let cw = ((w - 2 * sep) / 9).max(36); // min column width
+            let cells: [(&str, String, u32); 9] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
                 ("GPU", gtxt, if gpu >= 80 { warn } else { white }),
@@ -849,13 +861,15 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
                 ("CPU", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
                 ("GPU", ttxt, white),
+                ("DVN", { let d = DVN_PCT.load(Relaxed); if d >= 0 { format!("{}%", d) } else { "—".into() } },
+                 if DVN_PCT.load(Relaxed) >= 0 && DVN_PCT.load(Relaxed) < 20 { warn } else { white }),
                 ("CDX", { let c = CDX_PCT.load(Relaxed); if c >= 0 { format!("{}%", (100 - c).max(0)) } else { "—".into() } },
                  if CDX_PCT.load(Relaxed) >= 80 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
                 let shift = (if i >= 5 { sep } else { 0 }) + (if i >= 7 { sep } else { 0 });
                 let x0 = i as i32 * cw + shift + 2;
-                let x1 = if i == 7 { w } else { x0 + cw - 4 };
+                let x1 = if i == 8 { w } else { x0 + cw - 4 };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
                 let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
                 SetTextColor(dc, dim);
