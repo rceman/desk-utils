@@ -110,6 +110,47 @@ def intersects(px, py, pw, ph, zone):
     return not (px + pw <= x or px >= x + w or py + ph <= y or py >= y + h)
 
 
+def set_dark_title(root, dark):
+    try:
+        from ctypes import wintypes
+        user32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+        v = ctypes.c_int(1 if dark else 0)
+        hr = dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), ctypes.sizeof(v))
+        log(f"dark title {dark} hwnd={hwnd} hr={hr}")
+    except Exception as e:
+        log(f"dark title error: {e}")
+
+
+class Border:
+    def __init__(self, tk, zone):
+        x, y, w, h = zone
+        t = 4
+        self.wins = []
+        for bx, by, bw, bh in [(x - t, y - t, w + 2 * t, t),
+                               (x - t, y + h, w + 2 * t, t),
+                               (x - t, y, t, h),
+                               (x + w, y, t, h)]:
+            win = tk.Toplevel()
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.configure(bg="#00ff88")
+            win.geometry(f"{bw}x{bh}+{bx}+{by}")
+            self.wins.append(win)
+
+    def close(self):
+        for w in self.wins:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        self.wins = []
+
+
 class Panel:
     def __init__(self, tk, out_dir):
         self.tk = tk
