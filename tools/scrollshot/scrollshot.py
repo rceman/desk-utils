@@ -6,6 +6,16 @@ import argparse, datetime, os, queue, sys, threading, time
 import numpy as np
 from PIL import Image, ImageTk
 
+LOG_PATH = None
+
+def log(msg):
+    try:
+        if LOG_PATH:
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now():%H:%M:%S.%f}"[:-3] + f" {msg}\n")
+    except Exception:
+        pass
+
 IDLE_LIMIT = 3
 SAME_FRAME_DIFF = 2.0
 SETTLE_MS = 300
@@ -23,7 +33,7 @@ def grab(zone):
     return np.array(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
 
 
-def sig2(img, cols=32):
+def sig2(img, cols=64):
     g = img.mean(axis=2)
     h, w = g.shape
     cols = max(4, min(cols, w))
@@ -164,7 +174,7 @@ class Panel:
         self.root.title("ScrollShot")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
-        self.root.geometry("360x420+40+40")
+        self.root.geometry(self._place(zone))
         self.status = tk.StringVar(value="Waiting for scroll…")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
                  font=("Consolas", 10), justify="left", wraplength=340).pack(padx=10, pady=(10, 4), anchor="w")
@@ -173,7 +183,11 @@ class Panel:
                  font=("Consolas", 9)).pack(padx=10, anchor="w")
         self.canvas = tk.Canvas(self.root, bg="#111111", width=330, height=250, highlightthickness=0)
         self.canvas.pack(padx=10, pady=8)
+        global LOG_PATH
         self.folder = os.path.dirname(out_path)
+        os.makedirs(self.folder, exist_ok=True)
+        LOG_PATH = os.path.join(self.folder, "scrollshot.log")
+        log(f"panel placed {self.root.geometry()} zone={zone}")
         tk.Label(self.root, text=f"Save to: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
                  font=("Consolas", 8), wraplength=340, justify="left").pack(padx=10, anchor="w")
         btns = tk.Frame(self.root, bg="#1e1e1e")
@@ -187,6 +201,26 @@ class Panel:
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.capture_loop, daemon=True)
+
+    @staticmethod
+    def _place(zone):
+        import tkinter as tk
+        x, y, w, h = zone
+        root = tk.Tk()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.destroy()
+        pw, ph = 380, 470
+        if sw - (x + w) >= pw + 20:
+            px, py = x + w + 10, y
+        elif x >= pw + 20:
+            px, py = x - pw - 10, y
+        elif sh - (y + h) >= ph + 20:
+            px, py = x, y + h + 10
+        else:
+            px, py = sw - pw - 10, 10
+        px = max(0, min(px, sw - pw))
+        py = max(0, min(py, sh - ph))
+        return f"{pw}x{ph}+{px}+{py}"
 
     def start(self):
         self.worker.start()
@@ -247,6 +281,7 @@ class Panel:
         listener.start()
         try:
             self.frames.append(grab(self.zone))
+            log(f"first frame {self.frames[-1].shape}")
             self.events.put(("preview", self.frames[-1]))
             self.events.put(("info", f"frames: {len(self.frames)}  zone {self.zone[2]}x{self.zone[3]}"))
             idle = 0
@@ -258,6 +293,7 @@ class Panel:
                 time.sleep(SETTLE_MS / 1000.0)
                 new = grab(self.zone)
                 diff = full_diff(self.frames[-1], new)
+                log(f"scroll event: diff={diff:.2f}")
                 if diff < SAME_FRAME_DIFF:
                     idle += 1
                     self.events.put(("status", f"same picture ({idle}/{IDLE_LIMIT}) — scroll more or press Stop"))
@@ -266,6 +302,7 @@ class Panel:
                     continue
                 idle = 0
                 s, score = best_shift(self.frames[-1], new)
+                log(f"shift={s} score={score:.2f}")
                 self.frames.append(new)
                 if s > 0 and score < MSE_LIMIT:
                     self.events.put(("status", f"captured frame {len(self.frames)} (+{s}px, score {score:.1f})"))
@@ -279,7 +316,9 @@ class Panel:
             if len(self.frames) >= 1:
                 self.events.put(("status", "Stitching…"))
                 canvas = stitch(self.frames)
+                log(f"stitch: frames={len(self.frames)} result={canvas.shape}")
                 Image.fromarray(canvas).save(self.out_path)
+                log(f"saved {self.out_path}")
                 self.events.put(("preview", canvas))
                 self.events.put(("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}"))
                 self.events.put(("info", f"frames: {len(self.frames)}  → {self.out_path}"))
