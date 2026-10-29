@@ -14,7 +14,7 @@ STAGE_WIN = r"C:\Tools\dh-build-diskhound"
 STAGE = wsl_path(STAGE_WIN)
 DST_WIN = r"C:\Tools\diskhound\diskhound.exe"
 DST = wsl_path(DST_WIN)
-MATCH = r"diskhound\diskhound.exe"
+MATCH = r"C:\Tools\diskhound\diskhound.exe"
 EXE = os.path.join(STAGE, "target", "release", "diskhound.exe")
 EXE_WIN = STAGE_WIN + r"\target\release\diskhound.exe"
 MANIFEST = os.path.join(REPO, "diskhound.exe.manifest")
@@ -62,7 +62,9 @@ def main():
         try:
             shutil.copy2(MANIFEST, os.path.join("/mnt/c/Tools/diskhound", "diskhound.exe.manifest"))
         except OSError as e:
-            info(f"warn: loose manifest copy failed ({e}) — embedded manifest still present if mt ran")
+            if not mt:
+                fail(f"no mt AND loose manifest copy failed ({e}) — refusing to publish unembedded exe")
+            info(f"warn: loose manifest copy failed ({e}) — embedded manifest present")
         info(f"published -> {DST_WIN} (sha {sha256(DST)[:12]})")
 
         if launch:

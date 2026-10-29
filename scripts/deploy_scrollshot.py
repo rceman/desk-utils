@@ -15,7 +15,7 @@ DST_WIN = r"C:\Tools\diskhound\tools\scrollshot\scrollshot.py"
 DST = wsl_path(DST_WIN)
 LOG_WSL = "/mnt/c/Users/therceman/Pictures/Screenshots/ScrollShot/scrollshot.log"
 PYW = r"C:\Program Files\Python312\pythonw.exe"
-MATCH = r"diskhound\tools\scrollshot\scrollshot.py"  # full-path fragment (A5)
+MATCH = r"C:\Tools\diskhound\tools\scrollshot\scrollshot.py"
 
 
 def main():

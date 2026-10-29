@@ -73,6 +73,8 @@ def match_cmdline(cmd, exact):
     Quote/case tolerant; never matches other checkouts with the same basename."""
     e = exact.lower().replace("/", "\\")
     c = cmd.lower().replace("/", "\\").strip().strip('"')
+    if e.endswith(".py"):
+        return e in c  # full canonical path is unique; arg may be anywhere
     return c == e or c.startswith(e + " ") or c.startswith(e + '"') or (e + '"') in c
 
 

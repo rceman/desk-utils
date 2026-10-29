@@ -634,6 +634,9 @@ class Panel:
         except Exception as e:
             log(f"shot error: {e}")
             self._st = f"shot error: {e}"; self._render()
+        finally:
+            if self.border:
+                self.border.win.deiconify()
 
     def shot(self):
         if self._taking_shot:
@@ -877,16 +880,21 @@ class Panel:
                     wheeled = False
                     if f is None:
                         continue  # frame never settled; skip, don't touch anchor/pos/chunks
-                    frames += 1
                     fh = f.shape[0]
                     if canvas is None:
                         canvas, anchor, cap_h = f, f, fh
                         last_tick = time.monotonic()
+                        frames += 1
                         self.put("preview", canvas)
                     else:
+                        dy, score = find_dy(anchor, f)
+                        if need_settle and (not dy or dy > fh // 2 or score > 999.0):
+                            # post-wheel frame doesn't plausibly match anchor —
+                            # partial repaint; discard without touching state
+                            continue
+                        frames += 1
                         if frames % 5 == 0:
                             self.put("preview", f)
-                        dy, score = find_dy(anchor, f)
                         if dy:
                             anchor = f
                             scrolls += 1

@@ -14,7 +14,7 @@ STAGE_WIN = r"C:\Tools\dh-build-sysmon"
 STAGE = wsl_path(STAGE_WIN)
 DST_WIN = r"C:\Tools\diskhound\sysmon_tray.exe"
 DST = wsl_path(DST_WIN)
-MATCH = r"diskhound\sysmon_tray.exe"   # full-path fragment, not basename (A5)
+MATCH = r"C:\Tools\diskhound\sysmon_tray.exe"
 EXE = os.path.join(STAGE, "target", "release", "sysmon_tray.exe")
 DIAG_WSL = "/mnt/c/Users/therceman/AppData/Local/Temp/sysmon-pawnio.log"
 
@@ -52,7 +52,9 @@ def wait_ready(pid, offset, timeout=20):
             return "access_denied", seen
         if any("missing export" in l or "LoadLibrary failed" in l for l in lines):
             return "init_failed", seen
-        if any("msr=" in l and "hr=0x00000000" in l and "ret=1" in l for l in lines):
+        ok = [l for l in lines if "msr=0x19C" in l and "hr=0x00000000" in l
+              and "ret=1" in l and re.search(r"raw=0x(?!0+\b)[0-9a-fA-F]+", l)]
+        if ok:
             return "ready", seen
         time.sleep(0.6)
     return "timeout", seen
