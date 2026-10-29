@@ -169,7 +169,7 @@ class Border:
             d.polygon(pts, fill=c)
         img = img.resize((20, 20), Image.LANCZOS)
         self._grip_photo = ImageTk.PhotoImage(img)
-        lb = tk.Label(self.grip, image=self._grip_photo, bd=0, cursor="fleur")
+        lb = tk.Label(self.grip, image=self._grip_photo, bd=0, bg="#00ff88", cursor="fleur")
         lb.pack()
         lb.bind("<ButtonPress-1>", self._gstart)
         lb.bind("<B1-Motion>", self._gmove)
