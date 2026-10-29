@@ -149,14 +149,21 @@ class Border:
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
-        cv = tk.Canvas(self.grip, width=30, height=30, bg="#00ff88", highlightthickness=0,
-                       cursor="fleur")
-        cv.pack()
-        cv.bind("<ButtonPress-1>", self._gstart)
-        cv.bind("<B1-Motion>", self._gmove)
+        img = Image.new("RGB", (96, 96), "#00ff88")
+        d = ImageDraw.Draw(img)
         c = "#0d3320"
-        cv.create_line(15, 4, 15, 26, fill=c, width=2, arrow="both", arrowshape=(7, 8, 3))
-        cv.create_line(4, 15, 26, 15, fill=c, width=2, arrow="both", arrowshape=(7, 8, 3))
+        # move icon at 3x, downscaled for AA
+        for x0, y0, x1, y1 in [(48, 8, 48, 88), (8, 48, 88, 48)]:
+            d.line((x0, y0, x1, y1), fill=c, width=8)
+        for pts in [[(48, 4), (38, 18), (58, 18)], [(48, 92), (38, 78), (58, 78)],
+                    [(4, 48), (18, 38), (18, 58)], [(92, 48), (78, 38), (78, 58)]]:
+            d.polygon(pts, fill=c)
+        img = img.resize((30, 30), Image.LANCZOS)
+        self._grip_photo = ImageTk.PhotoImage(img)
+        lb = tk.Label(self.grip, image=self._grip_photo, bd=0, cursor="fleur")
+        lb.pack()
+        lb.bind("<ButtonPress-1>", self._gstart)
+        lb.bind("<B1-Motion>", self._gmove)
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
