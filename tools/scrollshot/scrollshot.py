@@ -155,8 +155,8 @@ class Border:
         cv.bind("<ButtonPress-1>", self._gstart)
         cv.bind("<B1-Motion>", self._gmove)
         c = "#0d3320"
-        cv.create_line(15, 7, 15, 23, fill=c, width=3)
-        cv.create_line(7, 15, 23, 15, fill=c, width=3)
+        cv.create_line(15, 4, 15, 26, fill=c, width=2, arrow="both", arrowshape=(7, 8, 3))
+        cv.create_line(4, 15, 26, 15, fill=c, width=2, arrow="both", arrowshape=(7, 8, 3))
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
