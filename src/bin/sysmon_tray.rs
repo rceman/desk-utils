@@ -258,6 +258,7 @@ unsafe extern "system" {
     fn SetThreadAffinityMask(h: isize, mask: usize) -> usize;
     fn GetTickCount64() -> u64;
     fn FileTimeToSystemTime(ft: *const FileTime, st: *mut SystemTime) -> i32;
+    fn FileTimeToLocalFileTime(ft: *const FileTime, lft: *mut FileTime) -> i32;
 }
 #[link(name = "pdh")]
 unsafe extern "system" {
@@ -1016,30 +1017,35 @@ fn open_settings(owner: HWND) {
     }
 }
 
-fn local_hhmm(epoch: i64) -> String {
+fn local_st(epoch: i64) -> Option<SystemTime> {
     unsafe {
         let ft = FileTime {
             lo: (((epoch + 11644473600) * 10_000_000) & 0xFFFF_FFFF) as u32,
             hi: ((((epoch + 11644473600) as u128 * 10_000_000) >> 32) & 0xFFFF_FFFF) as u32,
         };
-        let mut st = SystemTime { year: 0, month: 0, dow: 0, day: 0, hour: 0, minute: 0, second: 0, ms: 0 };
-        if FileTimeToSystemTime(&ft, &mut st) != 0 {
-            return format!("{:02}:{:02}", st.hour, st.minute);
+        let mut lft = FileTime { lo: 0, hi: 0 };
+        if FileTimeToLocalFileTime(&ft, &mut lft) == 0 {
+            return None;
         }
+        let mut st = SystemTime { year: 0, month: 0, dow: 0, day: 0, hour: 0, minute: 0, second: 0, ms: 0 };
+        if FileTimeToSystemTime(&lft, &mut st) != 0 {
+            Some(st)
+        } else {
+            None
+        }
+    }
+}
+
+fn local_hhmm(epoch: i64) -> String {
+    if let Some(st) = local_st(epoch) {
+        return format!("{:02}:{:02}", st.hour, st.minute);
     }
     "--:--".into()
 }
 
 fn local_dmhm(epoch: i64) -> String {
-    unsafe {
-        let ft = FileTime {
-            lo: (((epoch + 11644473600) * 10_000_000) & 0xFFFF_FFFF) as u32,
-            hi: ((((epoch + 11644473600) as u128 * 10_000_000) >> 32) & 0xFFFF_FFFF) as u32,
-        };
-        let mut st = SystemTime { year: 0, month: 0, dow: 0, day: 0, hour: 0, minute: 0, second: 0, ms: 0 };
-        if FileTimeToSystemTime(&ft, &mut st) != 0 {
-            return format!("{:02}.{:02} {:02}:{:02}", st.day, st.month, st.hour, st.minute);
-        }
+    if let Some(st) = local_st(epoch) {
+        return format!("{:02}.{:02} {:02}:{:02}", st.day, st.month, st.hour, st.minute);
     }
     "--".into()
 }
