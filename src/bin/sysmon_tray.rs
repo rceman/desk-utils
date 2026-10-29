@@ -146,6 +146,7 @@ static RAM_TOTAL_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 static POPUP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static POPUP_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static POPUP_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static CDX_SEC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static CDX_RESET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -666,6 +667,9 @@ fn read_cdx() -> Option<i32> {
                     let i = txt.find(key)? + key.len();
                     Some(txt[i..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect())
                 };
+                if let Some(sec) = num("\"secondary_used\":").and_then(|v| v.parse::<f64>().ok()) {
+                    CDX_SEC.store(sec.round() as i32, std::sync::atomic::Ordering::Relaxed);
+                }
                 if let Some(p) = num("\"primary_used\":") {
                     if let Some(f) = p.parse::<f64>().ok() {
                         if let Some(r) = num("\"primary_reset\":").and_then(|v| v.parse::<i64>().ok()) {
@@ -1050,17 +1054,23 @@ fn popup_lines() -> Vec<String> {
         if gp >= 0 { format!(" GPU: {}% {}", gp, if gt >= 0 { format!("{} °C", gt) } else { String::new() }) } else { String::new() }));
     let c = CDX_PCT.load(Relaxed);
     let cr = CDX_RESET.load(Relaxed);
-    let plan = std::env::var("USERPROFILE").ok()
+    let cache_txt = std::env::var("USERPROFILE").ok()
         .and_then(|h| std::fs::read_to_string(format!("{h}\\.codex\\limits_cache.json")).ok())
-        .and_then(|t| {
-            let i = t.find("\"plan\":\"")? + 8;
-            Some(t[i..].chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect::<String>())
-        })
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "?".into());
-    v.push(format!("Codex [{}]: {}", plan, if c >= 0 {
+        .unwrap_or_default();
+    let field = |k: &str| -> String {
+        cache_txt.find(k).and_then(|i| {
+            let rest = &cache_txt[i + k.len()..];
+            let rest = rest.strip_prefix('"').unwrap_or(rest);
+            let v: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.').collect();
+            if v.is_empty() { None } else { Some(v) }
+        }).unwrap_or_else(|| "?".into())
+    };
+    let acct = field("\"acct\":");
+    let sec = CDX_SEC.load(Relaxed);
+    v.push(format!("Codex [{}]: {}{}", acct, if c >= 0 {
         if cr > 0 { format!("{}% 5h, resets {}", 100 - c, local_hhmm(cr)) } else { format!("{}% 5h", 100 - c) }
-    } else { "— 5h".into() }));
+    } else { "— 5h".into() },
+        if sec >= 0 { format!(" {}% weekly", 100 - sec) } else { String::new() }));
     v.push("Devin [main]: — weekly".to_string());
     v
 }
