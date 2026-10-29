@@ -187,7 +187,7 @@ class Border:
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
         for win, (bx, by) in zip(self.corners, [(x - t, y - t), (x + w, y - t),
                                                 (x - t, y + h), (x + w, y + h)]):
-            win.geometry(f"{t + 2}x{t + 2}+{bx - 1}+{by - 1}")
+            win.geometry(f"14x14+{bx - 4}+{by - 4}")
         self.grip.geometry(f"22x22+{x + w + t - 4}+{y - t - 16}")
 
     def _move(self, edge, rx, ry):
