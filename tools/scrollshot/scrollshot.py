@@ -3,6 +3,15 @@ import argparse, ctypes, datetime, os, queue, threading, time
 import numpy as np
 from PIL import Image, ImageTk
 
+# Must run before any window is created: logical px == physical px for mss/grab
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PerMonitorV2
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 FPS = 15
 MAX_DY = 260
 MIN_DY = 6
