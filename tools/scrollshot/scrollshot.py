@@ -149,10 +149,7 @@ class Border:
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
-        cv = tk.Canvas(self.grip, width=22, height=22, bg="#111111", highlightthickness=0,
-                       cursor="fleur")
-        cv.pack()
-        cv.create_oval(2, 2, 20, 20, fill="#ffcc00", outline="")
+        self.grip.configure(bg="#ffcc00", cursor="fleur")
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
@@ -165,7 +162,7 @@ class Border:
                  (x - t, y, t, h), (x + w, y, t, h)]
         for win, (bx, by, bw, bh) in zip(self.wins, geoms):
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
-        self.grip.geometry(f"22x22+{x + w + t - 3}+{y - t - 19}")
+        self.grip.geometry(f"22x22+{x + w + t - 5}+{y - t - 17}")
 
     def _move(self, edge, rx, ry):
         x, y, w, h = self.zone
