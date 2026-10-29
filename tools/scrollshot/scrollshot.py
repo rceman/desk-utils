@@ -402,6 +402,8 @@ class Panel:
 
         self.scroll_iv = 1.0
         self.auto_scroll = tk.BooleanVar(value=False)
+        self.prtscr = tk.BooleanVar(value=False)
+        self.copy_as_path = tk.BooleanVar(value=True)
         row = tk.Frame(self.root, bg="#1e1e1e")
         row.pack(anchor="w", padx=10)
         tk.Checkbutton(row, text="Auto scroll", variable=self.auto_scroll, bg="#1e1e1e",
@@ -411,7 +413,7 @@ class Panel:
                                 font=("Consolas", 8), width=5)
         self._ivbtn.pack(side="left", padx=4)
         self.border_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(row, text="Show border", variable=self.border_var,
+        tk.Checkbutton(row, text="Show Area border", variable=self.border_var,
                        command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
                        selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff",
@@ -438,6 +440,14 @@ class Panel:
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         tk.Button(r3, text="Copy image path", command=self.copy_path, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
+        r4 = tk.Frame(self.root, bg="#1e1e1e")
+        r4.pack(anchor="w", padx=10, pady=(2, 0))
+        for text, var in [("PrtScr = Take screenshot", self.prtscr),
+                          ("screenshot → path", self.copy_as_path)]:
+            tk.Checkbutton(r4, text=text, variable=var, bg="#1e1e1e", fg="#d0d0d0",
+                           selectcolor="#333333", activebackground="#1e1e1e",
+                           activeforeground="#ffffff",
+                           font=("Consolas", 8)).pack(side="left", padx=4)
         foot = tk.Frame(self.root, bg="#1e1e1e")
         foot.pack(fill="x", padx=10, pady=(4, 14))
         short = self.folder.replace(os.path.expanduser("~"), "~")
@@ -591,7 +601,10 @@ class Panel:
             self._st = "Screenshot saved"; self._render()
             self._inf = f"{img.shape[1]}x{img.shape[0]}"; self._render()
             log(f"shot saved {self.out_path}")
-            self.copy_path()
+            if self.copy_as_path.get():
+                self.copy_path()
+            else:
+                self.copy_image()
         except Exception as e:
             log(f"shot error: {e}")
             self._st = f"shot error: {e}"; self._render()
@@ -684,6 +697,31 @@ class Panel:
         log("reload")
         subprocess.Popen([sys.executable, os.path.abspath(__file__)])
         self.root.after(200, self.root.destroy)
+
+    def _prtscr_hook(self):
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+
+        class KB(ctypes.Structure):
+            _fields_ = [("vk", wintypes.DWORD), ("sc", wintypes.DWORD),
+                        ("fl", wintypes.DWORD), ("t", wintypes.DWORD),
+                        ("ex", wintypes.LPARAM)]
+
+        CB = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+        def proc(nc, wp, lp):
+            if wp in (0x100, 0x101) and self.prtscr.get():
+                if ctypes.cast(lp, ctypes.POINTER(KB)).contents.vk == 0x2C:
+                    self.root.after(0, self.shot)
+                    return 1
+            return u.CallNextHookEx(None, nc, wp, lp)
+
+        self._kb_cb = CB(proc)
+        self._hook = u.SetWindowsHookExW(13, self._kb_cb, None, 0)
+        m = wintypes.MSG()
+        while u.GetMessageW(ctypes.byref(m), None, 0, 0) > 0:
+            pass
 
     def cancel(self):
         self.cancel_flag.set()
