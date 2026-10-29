@@ -400,7 +400,7 @@ class Panel:
         os.makedirs(self.folder, exist_ok=True)
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
 
-        self.scroll_iv = 1.0
+        self.scroll_iv = 0.25
         self.auto_scroll = tk.BooleanVar(value=False)
         self.prtscr = tk.BooleanVar(value=True)
         self._prtscr_flag = True
@@ -726,11 +726,16 @@ class Panel:
         CB = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
         def proc(nc, wp, lp):
-            if nc >= 0 and wp == 0x100 and self._prtscr_flag:
+            if nc >= 0 and wp in (0x100, 0x101) and self._prtscr_flag:
                 vk = ctypes.cast(lp, ctypes.POINTER(KB)).contents.vk
                 if vk in (0x2C, 0x2A):
-                    self.put("shot", None)
+                    if wp == 0x100 and not getattr(self, "_shot_fired", False):
+                        self._shot_fired = True
+                        log(f"prtscr vk={vk:#x}")
+                        self.put("shot", None)
                     return 1
+                if vk and getattr(self, "_shot_fired", False) is None:
+                    log(f"first key vk={vk:#x}")
             return u.CallNextHookEx(None, nc, wp, lp)
 
         self._kb_cb = CB(proc)
