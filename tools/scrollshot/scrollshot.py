@@ -4,7 +4,7 @@ Capture model: continuous recording (~15 fps) while you scroll. Consecutive
 frames differ by a small dy, so alignment is unambiguous; new rows are appended
 to the canvas online (no giant frame buffers, no guessing across big jumps).
 """
-import argparse, datetime, os, threading, time
+import argparse, datetime, os, queue, threading, time
 import numpy as np
 from PIL import Image, ImageTk
 
@@ -114,6 +114,7 @@ class Panel:
         self.stop_flag = threading.Event()
         self.cancel_flag = threading.Event()
         self.canvas_img = None
+        self.q = queue.Queue()
         self.root = tk.Tk()
         self.root.title("ScrollShot")
         self.root.attributes("-topmost", True)
@@ -159,6 +160,9 @@ class Panel:
                 return f"{pw}x{ph}+{cx}+{cy}"
         return f"{pw}x{ph}+{max(0, sw - pw - 10)}+10"
 
+    def put(self, kind, payload):
+        self.q.put((kind, payload))
+
     def start(self):
         self.worker.start()
         self.root.after(80, self.poll)
@@ -166,12 +170,21 @@ class Panel:
 
     def poll(self):
         try:
-            if self.canvas_img is not None:
-                self.show(self.canvas_img)
-                self.canvas_img = None
+            while True:
+                kind, payload = self.q.get_nowait()
+                if kind == "status":
+                    self.status.set(payload)
+                elif kind == "info":
+                    self.info.set(payload)
+                elif kind == "preview":
+                    self.show(payload)
+                elif kind == "done":
+                    self.status.set(payload)
+        except queue.Empty:
+            pass
         except Exception as e:
             log(f"poll error: {e}")
-        self.root.after(150, self.poll)
+        self.root.after(120, self.poll)
 
     def show(self, arr):
         try:
@@ -216,17 +229,17 @@ class Panel:
                 if canvas is None:
                     canvas = f
                     last_new = time.monotonic()
-                    self.canvas_img = canvas
-                    self.status.set("Recording — scroll the zone")
+                    self.put("preview", canvas)
+                    self.put("status", "Recording — scroll the zone")
                 elif prev is not None:
                     dy, score = find_dy(prev, f)
                     if dy:
                         canvas = np.vstack([canvas, f[f.shape[0] - dy:]])
                         last_new = time.monotonic()
                         scrolled = True
-                        self.status.set(f"captured +{dy}px  (total {canvas.shape[0]}px)")
-                        self.info.set(f"frames: {frames}  dy: {dy}  score: {score:.1f}")
-                        self.canvas_img = canvas
+                        self.put("status", f"captured +{dy}px  (total {canvas.shape[0]}px)")
+                        self.put("info", f"frames: {frames}  dy: {dy}  score: {score:.1f}")
+                        self.put("preview", canvas)
                         log(f"dy={dy} score={score:.1f} canvas={canvas.shape[0]}")
                 prev = f
                 if scrolled and time.monotonic() - last_new > IDLE_SEC:
@@ -237,7 +250,7 @@ class Panel:
                     time.sleep(dt)
         except Exception as e:
             log(f"record error: {e}")
-            self.status.set(f"error: {e}")
+            self.put("status", f"error: {e}")
         if self.cancel_flag.is_set():
             log("cancelled")
             return
@@ -246,12 +259,12 @@ class Panel:
         try:
             Image.fromarray(canvas).save(self.out_path)
             log(f"saved {self.out_path} {canvas.shape}")
-            self.canvas_img = canvas
-            self.status.set(f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
-            self.info.set(f"frames: {frames}  → {self.out_path}")
+            self.put("preview", canvas)
+            self.put("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
+            self.put("info", f"frames: {frames}  → {self.out_path}")
         except Exception as e:
             log(f"save error: {e}")
-            self.status.set(f"save error: {e}")
+            self.put("status", f"save error: {e}")
 
 
 def selftest():
