@@ -68,32 +68,34 @@ def procs(name):
     return [(int(r["ProcessId"]), r.get("CommandLine") or "") for r in rows]
 
 
-def match_cmdline(cmd, exact):
+def match_cmdline(cmd, exact, interp=""):
     """True if cmd's CommandLine refers to the exact canonical path.
-    Quote/case tolerant; never matches other checkouts with the same basename."""
+    Quote/case tolerant; never matches other checkouts with the same basename.
+    For .py targets the full cmdline must be exactly <interp> <script>."""
     e = exact.lower().replace("/", "\\")
     c = cmd.lower().replace("/", "\\").strip().strip('"')
     if e.endswith(".py"):
-        # entire cmdline must be <interp-path> <script> — no extra args
-        return bool(re.fullmatch(r'"?[a-z]:[\\/].*pythonw?\.exe"?\s+"?' + re.escape(e) + r'"?', c))
+        i = interp.lower().replace("/", "\\")
+        pat = r'"?' + re.escape(i) + r'"?\s+"?' + re.escape(e) + r'"?'
+        return bool(i) and bool(re.fullmatch(pat, c))
     return c == e or c.startswith(e + " ") or c.startswith(e + '"') or (e + '"') in c
 
 
-def kill_matching(name, exact_path):
+def kill_matching(name, exact_path, interp=""):
     """Kill only processes whose CommandLine resolves to exact_path."""
     killed = []
     for pid, cmd in procs(name):
-        if match_cmdline(cmd, exact_path):
+        if match_cmdline(cmd, exact_path, interp):
             ps(f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue", check=False)
             killed.append(pid)
     return killed
 
 
-def wait_gone(name, exact_path="", timeout=10):
+def wait_gone(name, exact_path="", timeout=10, interp=""):
     """Wait until no matching process remains; return True if gone."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not [p for p, c in procs(name) if match_cmdline(c, exact_path) if exact_path]:
+        if not [p for p, c in procs(name) if match_cmdline(c, exact_path, interp) if exact_path]:
             return True
         time.sleep(0.4)
     return False

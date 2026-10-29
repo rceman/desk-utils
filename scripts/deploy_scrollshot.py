@@ -8,6 +8,7 @@ import ast, os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _win import (REPO, fail, info, kill_matching, lock, log_since, log_size,
+                  match_cmdline,
                   procs, ps, sha256, start, unlock, wait_gone, wsl_path)
 
 SRC = os.path.join(REPO, "tools", "scrollshot", "scrollshot.py")
@@ -36,9 +37,9 @@ def main():
         info("scrollshot.py published (hash-verified)")
 
         before = {p for p, _ in procs("pythonw")}
-        killed = kill_matching("pythonw", MATCH)
+        killed = kill_matching("pythonw", MATCH, PYW)
         info(f"killed scrollshot pythonw: {killed or 'none'}")
-        if not wait_gone("pythonw", MATCH):
+        if not wait_gone("pythonw", MATCH, interp=PYW):
             fail("old scrollshot still running after 10s")
 
         mark = log_size(LOG_WSL)
@@ -47,7 +48,7 @@ def main():
         deadline = time.time() + 15
         while time.time() < deadline:
             pid = next((p for p, c in procs("pythonw")
-                        if MATCH.lower() in c.lower() and p not in before), None)
+                        if match_cmdline(c, MATCH, PYW) and p not in before), None)
             fresh = log_since(LOG_WSL, mark)
             if pid and "panel ready" in fresh:
                 info(f"UP pid={pid}, fresh panel ready OK")
