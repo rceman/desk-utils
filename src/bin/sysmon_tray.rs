@@ -813,7 +813,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let white = 0x00FF_FFFFu32;
             // usage first, separator, then temps: CPU RAM GPU C:/ W:/ | C° G°
             let sep = 8i32;
-            let cw = ((w - sep) / 8).max(36); // min column width
+            let cw = ((w - 2 * sep) / 8).max(36); // min column width
             let cells: [(&str, String, u32); 8] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
@@ -827,7 +827,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                  if CDX_PCT.load(Relaxed) >= 80 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
-                let shift = if i >= 7 { sep } else { 0 };
+                let shift = (if i >= 5 { sep } else { 0 }) + (if i >= 7 { sep } else { 0 });
                 let x0 = i as i32 * cw + shift + 2;
                 let x1 = if i == 7 { w } else { x0 + cw - 4 };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
@@ -838,8 +838,10 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                 DrawTextW(dc, wide(val).as_ptr(), -1, &mut rb, 0x25);
             }
             let sb = CreateSolidBrush(0x0060_6060);
-            let sr = Rect { left: 7 * cw + 4, top: 3, right: 7 * cw + 5, bottom: h - 3 };
-            FillRect(dc, &sr, sb);
+            for sx in [5 * cw + 2, 7 * cw + sep + 2] {
+                let sr = Rect { left: sx, top: 3, right: sx + 1, bottom: h - 3 };
+                FillRect(dc, &sr, sb);
+            }
             DeleteObject(sb);
             SelectObject(dc, old);
             DeleteObject(font);
