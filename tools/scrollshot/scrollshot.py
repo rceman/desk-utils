@@ -15,7 +15,7 @@ except Exception:
         except Exception:
             pass
 
-FPS = 15
+FPS = 20
 MAX_DY = 260
 MIN_DY = 6
 THRESH = 12.0
@@ -66,6 +66,7 @@ def find_dy(prev, new):
         return 0, base
     cands.sort()
     best = cands[0][0]
+    winners = []
     for _, dy in [c for c in cands if c[0] <= best * 1.5 + 0.5][:12]:
         if dy > 0:
             a, b = ga[dy:], gb[:h - dy]
@@ -73,7 +74,10 @@ def find_dy(prev, new):
             a, b = ga[:h + dy], gb[-dy:]
         v = float(np.abs(a - b).mean())
         if v < base * 0.6 and v < THRESH * 2:
-            return dy, v
+            winners.append((v, abs(dy), dy))
+    if winners:
+        winners.sort()
+        return winners[0][2], winners[0][0]
     return 0, base
 
 
