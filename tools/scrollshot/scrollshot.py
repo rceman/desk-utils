@@ -12,7 +12,7 @@ FPS = 15
 MAX_DY = 260          # max px shift between two consecutive frames
 MIN_DY = 6            # smaller shifts are treated as "no scroll"
 THRESH = 12.0         # mean-abs profile error accepted as a match
-IDLE_SEC = 5.0        # auto-stop after this long without new content
+IDLE_SEC = 10.0        # auto-stop after this long without new content
 LOG_PATH = None
 
 
