@@ -1,7 +1,7 @@
 """ScrollShot: pick a zone (green border), press Start, scroll, get one long PNG."""
 import argparse, ctypes, datetime, os, queue, threading, time
 import numpy as np
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 # Must run before any window is created: logical px == physical px for mss/grab
 try:
