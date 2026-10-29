@@ -189,12 +189,16 @@ class Panel:
         os.makedirs(self.folder, exist_ok=True)
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
 
+        self.scroll_iv = 1.0
         self.auto_scroll = tk.BooleanVar(value=False)
         row = tk.Frame(self.root, bg="#1e1e1e")
         row.pack(anchor="w", padx=10)
         tk.Checkbutton(row, text="Auto scroll", variable=self.auto_scroll, bg="#1e1e1e",
                        fg="#d0d0d0", selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff", font=("Consolas", 9)).pack(side="left")
+        self._ivbtn = tk.Button(row, text="1.0s", command=self.cycle_iv, bg="#3d3d3d", fg="#a0d0a0",
+                                font=("Consolas", 8), width=5)
+        self._ivbtn.pack(side="left", padx=4)
         self.border_var = tk.BooleanVar(value=True)
         tk.Checkbutton(row, text="Show border", variable=self.border_var,
                        command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
@@ -325,6 +329,12 @@ class Panel:
         self.worker.start()
         self.root.after(80, self.poll)
         self.root.mainloop()
+
+    def cycle_iv(self):
+        ivs = [1.0, 0.5, 0.25, 2.0]
+        self.scroll_iv = ivs[(ivs.index(self.scroll_iv) + 1) % len(ivs)]
+        self._ivbtn.config(text=f"{self.scroll_iv}s")
+        log(f"scroll interval {self.scroll_iv}")
 
     def toggle_rec(self):
         if not self.recording:
@@ -474,7 +484,7 @@ class Panel:
             last_tick = 0.0
             try:
                 while not self.stop_flag.is_set():
-                    if self.auto_scroll.get() and time.monotonic() - last_tick >= 1.0:
+                    if self.auto_scroll.get() and time.monotonic() - last_tick >= self.scroll_iv:
                         last_tick = time.monotonic()
                         try:
                             import ctypes
