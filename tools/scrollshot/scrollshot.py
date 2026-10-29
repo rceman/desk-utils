@@ -167,12 +167,17 @@ class Panel:
                  font=("Consolas", 9)).pack(padx=10, anchor="w")
         self.canvas = tk.Canvas(self.root, bg="#111111", width=330, height=250, highlightthickness=0)
         self.canvas.pack(padx=10, pady=8)
+        self.folder = os.path.dirname(out_path)
+        tk.Label(self.root, text=f"Save to: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
+                 font=("Consolas", 8), wraplength=340, justify="left").pack(padx=10, anchor="w")
         btns = tk.Frame(self.root, bg="#1e1e1e")
         btns.pack(pady=4)
         tk.Button(btns, text="Stop & Save", command=self.finish, bg="#2d6a2d", fg="white",
                   font=("Consolas", 10), width=12).pack(side="left", padx=4)
         tk.Button(btns, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
                   font=("Consolas", 10), width=8).pack(side="left", padx=4)
+        tk.Button(btns, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
+                  font=("Consolas", 10), width=11).pack(side="left", padx=4)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.capture_loop, daemon=True)
@@ -212,6 +217,10 @@ class Panel:
         self.photo = ImageTk.PhotoImage(img)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+
+    def open_folder(self):
+        os.makedirs(self.folder, exist_ok=True)
+        os.startfile(self.folder)
 
     def finish(self):
         self.stop_flag.set()
@@ -265,6 +274,10 @@ class Panel:
                 self.events.put(("preview", canvas))
                 self.events.put(("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}"))
                 self.events.put(("info", f"frames: {len(self.frames)}  → {self.out_path}"))
+                try:
+                    os.startfile(self.folder)
+                except Exception:
+                    pass
                 self.events.put(("done", f"Saved: {self.out_path}"))
 
 
@@ -299,7 +312,7 @@ def main():
     if not zone:
         print("cancelled")
         return
-    out = args.out or os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots",
+    out = args.out or os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots", "ScrollShot",
                                    f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     Panel(zone, out).start()
