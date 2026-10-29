@@ -110,103 +110,62 @@ def intersects(px, py, pw, ph, zone):
     return not (px + pw <= x or px >= x + w or py + ph <= y or py >= y + h)
 
 
-def set_dark_title(root, dark):
-    try:
-        from ctypes import wintypes
-        user32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
-        user32.GetParent.argtypes = [wintypes.HWND]
-        user32.GetParent.restype = wintypes.HWND
-        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
-        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
-        v = ctypes.c_int(1 if dark else 0)
-        hr = dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), ctypes.sizeof(v))
-        log(f"dark title {dark} hwnd={hwnd} hr={hr}")
-    except Exception as e:
-        log(f"dark title error: {e}")
-
-
-class Border:
-    def __init__(self, tk, zone):
-        x, y, w, h = zone
-        t = 4
-        self.wins = []
-        for bx, by, bw, bh in [(x - t, y - t, w + 2 * t, t),
-                               (x - t, y + h, w + 2 * t, t),
-                               (x - t, y, t, h),
-                               (x + w, y, t, h)]:
-            win = tk.Toplevel()
-            win.overrideredirect(True)
-            win.attributes("-topmost", True)
-            win.configure(bg="#00ff88")
-            win.geometry(f"{bw}x{bh}+{bx}+{by}")
-            self.wins.append(win)
-
-    def close(self):
-        for w in self.wins:
-            try:
-                w.destroy()
-            except Exception:
-                pass
-        self.wins = []
-
-
 class Panel:
-    def __init__(self, zone, out_path):
-        import tkinter as tk
+    def __init__(self, tk, out_dir):
         self.tk = tk
-        self.zone = zone
-        self.out_path = out_path
+        self.out_dir = out_dir
+        self.out_path = None
+        self.zone = None
+        self.border = None
+        self.recording = False
         self.stop_flag = threading.Event()
         self.cancel_flag = threading.Event()
         self.start_flag = threading.Event()
         self.q = queue.Queue()
         self.root = tk.Tk()
-        self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
+        self.root.title("ScrollShot")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
-        self.root.geometry(self._place(zone))
+        self.root.geometry("+60+60")
         self.root.resizable(False, False)
-        self.status = tk.StringVar(value="Press Start to begin")
+        self.status = tk.StringVar(value="Select Area to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
                  font=("Consolas", 10), justify="left", wraplength=360, height=2,
                  anchor="nw").pack(padx=10, pady=(10, 4), anchor="w", fill="x")
         self.info = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
                  font=("Consolas", 9), height=1, anchor="w").pack(padx=10, anchor="w", fill="x")
-        self.view = tk.Canvas(self.root, bg="#111111", width=360, height=260, highlightthickness=0)
+        self.view = tk.Canvas(self.root, bg="#111111", width=360, height=240, highlightthickness=0)
         self.view.pack(padx=10, pady=8)
         global LOG_PATH
-        self.folder = os.path.dirname(out_path)
+        self.folder = out_dir
         os.makedirs(self.folder, exist_ok=True)
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
         tk.Label(self.root, text=f"Save to: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
                  font=("Consolas", 8), wraplength=360, justify="left").pack(padx=10, anchor="w")
-        self.dark = tk.BooleanVar(value=True)
-        row = tk.Frame(self.root, bg="#1e1e1e")
-        row.pack(pady=(6, 0))
-        tk.Checkbutton(row, text="Dark title", variable=self.dark, command=self.apply_dark,
-                       bg="#1e1e1e", fg="#d0d0d0", selectcolor="#333333",
-                       activebackground="#1e1e1e", activeforeground="#ffffff",
-                       font=("Consolas", 9)).pack(side="left")
+        self.border_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.root, text="Record Area Border", variable=self.border_var,
+                       command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
+                       selectcolor="#333333", activebackground="#1e1e1e",
+                       activeforeground="#ffffff",
+                       font=("Consolas", 9)).pack(anchor="w", padx=10)
         btns = tk.Frame(self.root, bg="#1e1e1e")
         btns.pack(pady=4, fill="x")
-        r1 = tk.Frame(btns, bg="#1e1e1e")
-        r1.pack()
-        self.btn_start = tk.Button(r1, text="Start", command=self.start_rec, bg="#2d6a2d", fg="white",
-                                   font=("Consolas", 10), width=14)
-        self.btn_start.pack(side="left", padx=4, pady=2)
-        self.btn_stop = tk.Button(r1, text="Stop & Save", command=self.finish, bg="#4a4a2d", fg="white",
-                                  font=("Consolas", 10), width=14, state="disabled")
-        self.btn_stop.pack(side="left", padx=4, pady=2)
-        r2 = tk.Frame(btns, bg="#1e1e1e")
-        r2.pack()
-        tk.Button(r2, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
+        r0 = tk.Frame(btns, bg="#1e1e1e"); r0.pack()
+        tk.Button(r0, text="Select Area", command=self.select_area, bg="#4a2d6a", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        tk.Button(r0, text="Take screenshot", command=self.shot, bg="#2d5a6a", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        r1 = tk.Frame(btns, bg="#1e1e1e"); r1.pack()
+        self.btn_rec = tk.Button(r1, text="Start", command=self.toggle_rec, bg="#2d6a2d",
+                                 fg="white", font=("Consolas", 10), width=14, state="disabled")
+        self.btn_rec.pack(side="left", padx=4, pady=2)
+        tk.Button(r1, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        r2 = tk.Frame(btns, bg="#1e1e1e"); r2.pack()
         tk.Button(r2, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
-        r3 = tk.Frame(btns, bg="#1e1e1e")
-        r3.pack()
+        r3 = tk.Frame(btns, bg="#1e1e1e"); r3.pack()
         tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         tk.Button(r3, text="Copy path", command=self.copy_path, bg="#3d3d3d", fg="white",
@@ -214,15 +173,34 @@ class Panel:
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
-        self.border = Border(tk, zone)
-        log(f"panel {self._place(zone)} zone={zone}")
+        log("panel ready")
 
-    @staticmethod
-    def _place(zone):
-        import tkinter as tk
+    def put(self, kind, payload):
+        self.q.put((kind, payload))
+
+    def select_area(self):
+        zone = select_zone()
+        if zone is None:
+            return
+        self.zone = zone
+        self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
+        self.btn_rec.config(state="normal")
+        self.root.geometry(self._place(zone))
+        self.apply_border()
+        self.status.set("Press Start")
+        log(f"zone={zone}")
+
+    def apply_border(self):
+        if self.border:
+            self.border.close()
+            self.border = None
+        if self.border_var.get() and self.zone:
+            self.border = Border(self.tk, self.zone)
+
+    def _place(self, zone):
         x, y, w, h = zone
-        r = tk.Tk(); sw, sh = r.winfo_screenwidth(), r.winfo_screenheight(); r.destroy()
-        pw, ph = 400, 560
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        pw, ph = 400, 540
         for cx, cy in [(x + w + 12, y), (x - pw - 12, y), (x, y + h + 12), (x, y - ph - 12),
                        (sw - pw - 12, 12), (12, 12), (sw - pw - 12, sh - ph - 12), (12, sh - ph - 12)]:
             cx, cy = max(0, min(cx, sw - pw)), max(0, min(cy, sh - ph))
@@ -230,25 +208,43 @@ class Panel:
                 return f"{pw}x{ph}+{cx}+{cy}"
         return f"{pw}x{ph}+{max(0, sw - pw - 12)}+12"
 
-    def put(self, kind, payload):
-        self.q.put((kind, payload))
-
-    def apply_dark(self):
-        set_dark_title(self.root, self.dark.get())
-
     def start(self):
-        self.root.update_idletasks()
-        self.root.after(120, self.apply_dark)
         self.worker.start()
         self.root.after(80, self.poll)
         self.root.mainloop()
 
-    def start_rec(self):
-        if not self.start_flag.is_set():
+    def toggle_rec(self):
+        if not self.recording:
+            if not self.zone:
+                return
+            self.stop_flag.clear()
             self.start_flag.set()
-            self.btn_start.config(state="disabled")
-            self.btn_stop.config(state="normal")
+            self.recording = True
+            self.btn_rec.config(text="Stop & Save", bg="#4a4a2d")
             self.status.set("Recording")
+        else:
+            self.stop_flag.set()
+            self.recording = False
+            self.btn_rec.config(text="Start", bg="#2d6a2d")
+
+    def shot(self):
+        if not self.zone:
+            self.status.set("Select Area first")
+            return
+        try:
+            img = grab(self.zone)
+            self.out_path = self._new_path()
+            Image.fromarray(img).save(self.out_path)
+            self.put("preview", img)
+            self.status.set("Screenshot saved")
+            self.info.set(f"{img.shape[1]}x{img.shape[0]}")
+            log(f"shot saved {self.out_path}")
+        except Exception as e:
+            log(f"shot error: {e}")
+            self.status.set(f"shot error: {e}")
+
+    def _new_path(self):
+        return os.path.join(self.folder, f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}.png")
 
     def poll(self):
         try:
@@ -261,34 +257,31 @@ class Panel:
                 elif kind == "preview":
                     self.show(payload)
                 elif kind == "btn":
-                    if payload == "start_on":
-                        self.btn_start.config(state="normal")
-                        self.btn_stop.config(state="disabled")
+                    self.recording = False
+                    self.btn_rec.config(text="Start", bg="#2d6a2d", state="normal")
         except queue.Empty:
             pass
-        except Exception as e:
-            log(f"poll error: {e}")
-        self.root.after(120, self.poll)
+        self.root.after(80, self.poll)
 
     def show(self, arr):
         try:
             img = Image.fromarray(arr)
             w, h = img.size
-            s = min(360 / w, 260 / h, 1.0)
+            s = min(360 / w, 240 / h, 1.0)
             if s < 1.0:
-                img = img.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
-            if img.height > 260:
-                img = img.crop((0, img.height - 260, img.width, img.height))
+                img = img.resize((int(w * s), int(h * s)), Image.BILINEAR)
+            if img.height > 240:
+                img = img.crop((0, img.height - 240, img.width, img.height))
             self.photo = ImageTk.PhotoImage(img)
             self.view.delete("all")
-            self.view.create_image(0, 0, anchor="nw", image=self.photo)
+            self.view.create_image(180, 120, image=self.photo)
         except Exception as e:
             log(f"show error: {e}")
 
     def open_folder(self):
         try:
             import subprocess
-            if os.path.exists(self.out_path):
+            if self.out_path and os.path.exists(self.out_path):
                 subprocess.Popen(["explorer.exe", f"/select,{self.out_path}"])
             else:
                 os.startfile(self.folder)
@@ -297,44 +290,43 @@ class Panel:
 
     def copy_image(self):
         try:
-            path = self.out_path if os.path.exists(self.out_path) else None
-            if not path:
-                self.put("status", "Nothing to copy yet")
+            if not (self.out_path and os.path.exists(self.out_path)):
+                self.status.set("Nothing to copy yet")
                 return
-            ps = ('Add-Type -AssemblyName System.Drawing,System.Windows.Forms;'
-                  f'$img=[System.Drawing.Image]::FromFile("{path}");'
-                  '[System.Windows.Forms.Clipboard]::SetImage($img);$img.Dispose()')
             import subprocess
+            ps = ('Add-Type -AssemblyName System.Drawing,System.Windows.Forms;'
+                  f'$img=[System.Drawing.Image]::FromFile("{self.out_path}");'
+                  '[System.Windows.Forms.Clipboard]::SetImage($img);$img.Dispose()')
             subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
                              creationflags=0x08000000)
-            self.put("status", "Image copied to clipboard")
-            log(f"copy {path}")
+            self.status.set("Image copied to clipboard")
+            log(f"copy {self.out_path}")
         except Exception as e:
             log(f"copy error: {e}")
 
     def copy_path(self):
-        path = self.out_path if os.path.exists(self.out_path) else self.folder
-        self.root.clipboard_clear()
-        self.root.clipboard_append(path)
-        self.put("status", "Path copied to clipboard")
-
-    def finish(self):
-        self.stop_flag.set()
+        try:
+            path = self.out_path if (self.out_path and os.path.exists(self.out_path)) else self.folder
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
+            self.status.set("Path copied to clipboard")
+        except Exception as e:
+            log(f"copy path: {e}")
 
     def cancel(self):
         self.cancel_flag.set()
         self.stop_flag.set()
-        self.border.close()
-        self.root.after(200, self.root.destroy)
+        if self.border:
+            self.border.close()
+        self.root.destroy()
 
     def record_loop(self):
         while not self.cancel_flag.is_set():
-            # ---- wait for Start ----
             while not self.start_flag.is_set():
                 if self.cancel_flag.is_set():
                     return
                 time.sleep(0.05)
-            # ---- one recording session ----
+            zone = self.zone
             chunks, top_chunks = [], []
             canvas = None
             anchor = None
@@ -345,18 +337,13 @@ class Panel:
             try:
                 while not self.stop_flag.is_set():
                     t0 = time.monotonic()
-                    f = grab(self.zone)
+                    f = grab(zone)
                     frames += 1
                     fh = f.shape[0]
                     if canvas is None:
-                        canvas = f
-                        anchor = f
-                        cap_h = fh
+                        canvas, anchor, cap_h = f, f, fh
                         self.put("preview", canvas)
                     else:
-                        if frames % 5 == 0:
-                            tail = canvas[-200:] if not chunks else np.vstack([canvas[-200:], *chunks[-2:]])
-                            self.put("preview", tail)
                         dy, score = find_dy(anchor, f)
                         if dy:
                             anchor = f
@@ -374,6 +361,8 @@ class Panel:
                             pos = new_pos
                             self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-2:]]))
                             self.put("info", f"frames {frames} · scrolls {scrolls} · {cap_h}px")
+                    if frames % 5 == 0 and chunks:
+                        self.put("preview", np.vstack([canvas[-200:], *chunks[-2:]]))
                     left = IDLE_SEC - (time.monotonic() - last_new)
                     self.put("status", f"Recording · auto-save in {max(0, int(left + 0.999))}s")
                     if left <= 0:
@@ -387,12 +376,13 @@ class Panel:
                 log(f"record error: {e}\n{traceback.format_exc()}")
                 self.put("status", f"error: {e}")
                 self.put("info", "failed — nothing saved")
-                self.border.close()
-                return
+                self.put("btn", "start")
+                self.start_flag.clear()
+                self.stop_flag.clear()
+                continue
             if self.cancel_flag.is_set():
                 log("cancelled")
                 return
-            # ---- save ----
             if canvas is not None:
                 if chunks or top_chunks:
                     try:
@@ -402,45 +392,50 @@ class Panel:
                 if self.cancel_flag.is_set():
                     return
                 try:
+                    self.out_path = self._new_path()
                     tmp = self.out_path + ".tmp.png"
                     Image.fromarray(canvas).save(tmp)
                     os.replace(tmp, self.out_path)
                     log(f"saved {self.out_path} {canvas.shape}")
                     self.put("preview", canvas)
-                    self.put("status", "Screenshot saved")
+                    self.put("status", "Screenshot saved — Start for next")
                     self.put("info", f"frames {frames} · scrolls {scrolls} · {canvas.shape[0]}px")
                 except Exception as e:
                     log(f"save error: {e}")
                     self.put("status", f"save error: {e}")
-            # ---- reset for next session ----
             self.start_flag.clear()
             self.stop_flag.clear()
-            self.put("btn", "start_on")
-            self.put("status", "Screenshot saved — Start for next")
-        return
+            self.put("btn", "start")
 
 
 def selftest():
     rng = np.random.default_rng(0)
-    tall = (rng.random((3000, 300, 3)) * 100 + 80).astype(np.uint8)
-    tall[::22] = 25
-    fh = 600
+    tall = rng.random((4000, 400, 3)) * 255
+    tall = tall.astype(np.uint8)
+    tall[::30] = 30
+    h = 400
     for step in (8, 25, 90, 200):
-        canvas, prev, pos = None, None, 0
-        while pos + fh <= tall.shape[0] - step * 2:
-            f = tall[pos:pos + fh]
-            if canvas is None:
-                canvas = f.copy()
-            else:
-                dy, sc = find_dy(prev, f)
-                assert dy == step, f"step {step}: dy={dy} score={sc:.1f}"
-                canvas = np.vstack([canvas, f[fh - dy:]])
-            prev = f
+        pos, frames = 0, []
+        for i in range(14):
             pos += step
+            frames.append(tall[pos:pos + h].copy())
+        canvas, anchor, top, cap_h, pos_d = frames[0], frames[0], 0, h, 0
+        for f in frames[1:]:
+            dy, sc = find_dy(anchor, f)
+            anchor = f
+            new_pos = pos_d + dy
+            if new_pos < top:
+                canvas = np.vstack([f[:min(top - new_pos, h)], canvas])
+                top, cap_h = new_pos, cap_h + min(top - new_pos, h)
+            elif new_pos + h > top + cap_h:
+                st = top + cap_h - new_pos
+                canvas = np.vstack([canvas, f[st:]])
+                cap_h += h - st
+            pos_d = new_pos
         ref = tall[:canvas.shape[0]]
         diff = float(np.abs(canvas.astype(np.int16) - ref.astype(np.int16)).mean())
-        print(f"step={step:3d} canvas={canvas.shape[0]:5d} diff={diff:.3f}")
-        assert diff < 0.5
+        print(f"step={step:3d} canvas={canvas.shape[0]} diff={diff:.3f}")
+        assert diff == 0, f"step {step} mismatch"
     print("selftest OK")
 
 
@@ -448,17 +443,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--out", default=None)
-    a = ap.parse_args()
-    if a.selftest:
+    args = ap.parse_args()
+    if args.selftest:
         selftest()
         return
-    zone = select_zone()
-    if not zone:
-        return
-    out = a.out or os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots", "ScrollShot",
-                                f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}.png")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    Panel(zone, out).start()
+    import tkinter as tk
+    out_dir = (os.path.dirname(os.path.abspath(args.out)) if args.out else
+               os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots", "ScrollShot"))
+    os.makedirs(out_dir, exist_ok=True)
+    global LOG_PATH
+    LOG_PATH = os.path.join(out_dir, "scrollshot.log")
+    log("start")
+    try:
+        Panel(tk, out_dir).start()
+    except Exception:
+        import traceback
+        log(f"fatal: {traceback.format_exc()}")
 
 
 if __name__ == "__main__":
