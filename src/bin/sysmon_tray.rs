@@ -1060,11 +1060,11 @@ fn toggle_popup() {
             let dc = GetDC(ph);
             let font = CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, wide("Consolas").as_ptr());
             let old = SelectObject(dc, font);
-            let mut mx = 200i32;
+            let mut mx = 380i32;
             for ln in &lines {
                 let mut r = Rect { left: 0, top: 0, right: 0, bottom: 0 };
-                DrawTextW(dc, wide(ln).as_ptr(), -1, &mut r, 0x400 /*DT_CALCRECT*/ | 0x10);
-                mx = mx.max(r.right + 24);
+                DrawTextW(dc, wide(ln).as_ptr(), -1, &mut r, 0x400 /*DT_CALCRECT*/ | 0x20 /*DT_SINGLELINE*/);
+                mx = mx.max(r.right + 48);
             }
             SelectObject(dc, old);
             DeleteObject(font);
