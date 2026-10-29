@@ -665,7 +665,7 @@ fn read_cdx() -> Option<i32> {
             if let Ok(txt) = std::fs::read_to_string(&cache) {
                 let num = |key: &str| -> Option<String> {
                     let i = txt.find(key)? + key.len();
-                    Some(txt[i..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect())
+                    Some(txt[i..].trim_start().chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect())
                 };
                 if let Some(sec) = num("\"secondary_used\":").and_then(|v| v.parse::<f64>().ok()) {
                     CDX_SEC.store(sec.round() as i32, std::sync::atomic::Ordering::Relaxed);
@@ -1076,7 +1076,8 @@ fn popup_lines() -> Vec<String> {
         .unwrap_or_default();
     let dnum = |k: &str| -> Option<i64> {
         let i = dv.find(k)? + k.len();
-        let v: String = dv[i..].chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+        let rest = dv[i..].trim_start();
+        let v: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
         v.parse::<f64>().ok().map(|f| f as i64)
     };
     v.push(match dnum("\"weekly_left\":") {
