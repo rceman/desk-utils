@@ -127,7 +127,7 @@ static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0)
 static CFG_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static LAST_PCT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 // widget tuning (persisted to sysmon_tray.ini)
-static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(280);
+static W_WIDTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(320);
 static W_XOFF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 static W_FONTPC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(60);
 static W_BARH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(3);
@@ -139,6 +139,7 @@ static GPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 static CPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static NVML_DEV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static W_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static PDH_C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static PREV_TIMES: std::sync::Mutex<(u64, u64, u64)> = std::sync::Mutex::new((0, 0, 0));
@@ -597,6 +598,62 @@ fn cpu_temp() -> Option<i32> {
     }
 }
 
+fn newest_jsonl(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    // sessions/YYYY/MM/DD/*.jsonl -> pick max year, then month, then day, newest file
+    let years = std::fs::read_dir(dir).ok()?;
+    let mut yv: Vec<_> = years.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    yv.sort();
+    let y = yv.last()?;
+    let mut mv: Vec<_> = std::fs::read_dir(y).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    mv.sort();
+    let m = mv.last()?;
+    let mut dv: Vec<_> = std::fs::read_dir(m).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dv.sort();
+    let d = dv.last()?;
+    let mut fv: Vec<_> = std::fs::read_dir(d).ok()?.flatten().map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |x| x == "jsonl")).collect();
+    fv.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    fv.pop()
+}
+
+fn parse_cdx(path: &std::path::Path) -> Option<i32> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = len.saturating_sub(256 * 1024);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    let s = String::from_utf8_lossy(&buf);
+    let rl = s.rfind("\"rate_limits\"")?;
+    let tail = &s[rl..];
+    let key = "\"primary\":{\"used_percent\":";
+    let p = tail.find(key)? + key.len();
+    let num: String = tail[p..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    num.parse::<f64>().ok().map(|v| v.round() as i32)
+}
+
+fn read_cdx() -> Option<i32> {
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let cands = [
+        format!("{home}\\.codex\\sessions"),
+        r"\\wsl.localhost\Ubuntu\home\therceman\.codex\sessions".to_string(),
+    ];
+    let mut best: Option<(std::time::SystemTime, i32)> = None;
+    for c in cands {
+        let dir = std::path::Path::new(&c);
+        if let Some(f) = newest_jsonl(dir) {
+            let mt = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
+            if let (Some(mt), Some(pct)) = (mt, parse_cdx(&f)) {
+                if best.map_or(true, |(bt, _)| mt > bt) {
+                    best = Some((mt, pct));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 fn collect_metrics() {
     use std::sync::atomic::Ordering::Relaxed;
     unsafe {
@@ -637,6 +694,15 @@ fn collect_metrics() {
             );
         } else {
             W_PCT.store(-1, Relaxed);
+        }
+        // Codex 5h limit usage (throttled: every ~20 ticks = 10s)
+        {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if N.fetch_add(1, Relaxed) % 20 == 0 {
+                if let Some(p) = read_cdx() {
+                    CDX_PCT.store(p, Relaxed);
+                }
+            }
         }
         // CPU temp via PawnIO
         if let Some(t) = cpu_temp() {
@@ -722,8 +788,8 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             let white = 0x00FF_FFFFu32;
             // usage first, separator, then temps: CPU RAM GPU C:/ W:/ | C° G°
             let sep = 8i32;
-            let cw = ((w - sep) / 7).max(36); // min column width
-            let cells: [(&str, String, u32); 7] = [
+            let cw = ((w - sep) / 8).max(36); // min column width
+            let cells: [(&str, String, u32); 8] = [
                 ("CPU", format!("{}%", cpu), if cpu >= 80 { warn } else { white }),
                 ("RAM", format!("{}%", ram), if ram >= 80 { warn } else { white }),
                 ("GPU", gtxt, if gpu >= 80 { warn } else { white }),
@@ -732,11 +798,13 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
                 ("CPU", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
                 ("GPU", ttxt, white),
+                ("CDX", { let c = CDX_PCT.load(Relaxed); if c >= 0 { format!("{}%", c) } else { "—".into() } },
+                 if CDX_PCT.load(Relaxed) >= 80 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
                 let shift = if i >= 5 { sep } else { 0 };
                 let x0 = i as i32 * cw + shift + 2;
-                let x1 = if i == 6 { w } else { x0 + cw - 4 };
+                let x1 = if i == 7 { w } else { x0 + cw - 4 };
                 let mut rt = Rect { left: x0, top: 0, right: x1, bottom: rows_h / 2 };
                 let mut rb = Rect { left: x0, top: rows_h / 2, right: x1, bottom: rows_h };
                 SetTextColor(dc, dim);
