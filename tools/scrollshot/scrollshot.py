@@ -1,18 +1,13 @@
-"""ScrollShot: select a zone, scroll it, get one long PNG.
-
-Capture model: continuous recording (~15 fps) while you scroll. Consecutive
-frames differ by a small dy, so alignment is unambiguous; new rows are appended
-to the canvas online (no giant frame buffers, no guessing across big jumps).
-"""
-import argparse, datetime, os, queue, threading, time
+"""ScrollShot: pick a zone (green border), press Start, scroll, get one long PNG."""
+import argparse, ctypes, datetime, os, queue, threading, time
 import numpy as np
 from PIL import Image, ImageTk
 
 FPS = 15
-MAX_DY = 260          # max px shift between two consecutive frames
-MIN_DY = 6            # smaller shifts are treated as "no scroll"
-THRESH = 12.0         # mean-abs profile error accepted as a match
-IDLE_SEC = 10.0        # auto-stop after this long without new content
+MAX_DY = 260
+MIN_DY = 6
+THRESH = 12.0
+IDLE_SEC = 10.0
 LOG_PATH = None
 
 
@@ -33,34 +28,24 @@ def grab(zone):
     return np.array(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
 
 
-def profiles(img):
-    g = img.mean(axis=2)
-    return g.mean(axis=1), g
-
-
 def find_dy(prev, new):
-    """Vertical shift of document content between two consecutive frames."""
-    pa, ga = profiles(prev)
-    pb, gb = profiles(new)
+    ga = prev.mean(axis=2)
+    gb = new.mean(axis=2)
+    pa, pb = ga.mean(axis=1), gb.mean(axis=1)
     h = len(pa)
-    hi = min(MAX_DY, h - 60)
     best_dy, best = 0, float("inf")
-    for dy in range(MIN_DY, hi):
+    for dy in range(MIN_DY, min(MAX_DY, h - 60)):
         score = float(np.abs(pa[dy:] - pb[:h - dy]).mean())
         if score < best:
             best, best_dy = score, dy
     if best_dy and best < THRESH:
-        # verify on real pixels (sampled rows, full width)
         a = ga[best_dy:h:7].astype(np.int16)
         b = gb[:h - best_dy:7].astype(np.int16)
         n = min(len(a), len(b))
-        v = float(np.abs(a[:n] - b[:n]).mean())
-        if v < THRESH:
-            return best_dy, v
+        if n and float(np.abs(a[:n] - b[:n]).mean()) < THRESH:
+            return best_dy, best
     return 0, best
 
-
-# ---------- zone selector ----------
 
 def select_zone():
     import tkinter as tk
@@ -74,28 +59,18 @@ def select_zone():
     st = {"x0": 0, "y0": 0, "rect": None}
     cv.create_text(20, 20, anchor="nw", fill="#00ff88", font=("Consolas", 16),
                    text="Drag to select zone   ·   Esc = cancel")
-
-    def press(e):
-        st["x0"], st["y0"] = e.x_root, e.y_root
-        if st["rect"]:
-            cv.delete(st["rect"])
-        st["rect"] = cv.create_rectangle(e.x_root, e.y_root, e.x_root, e.y_root, outline="#00ff88", width=2)
-
-    def drag(e):
-        if st["rect"]:
-            cv.coords(st["rect"], st["x0"], st["y0"], e.x_root, e.y_root)
-
-    def release(e):
-        x1, y1 = e.x_root, e.y_root
-        x, y = min(st["x0"], x1), min(st["y0"], y1)
-        w, h = abs(x1 - st["x0"]), abs(y1 - st["y0"])
+    cv.bind("<ButtonPress-1>", lambda e: (st.update(x0=e.x_root, y0=e.y_root),
+                                          cv.delete(st["rect"]) if st["rect"] else None,
+                                          st.update(rect=cv.create_rectangle(e.x_root, e.y_root, e.x_root, e.y_root,
+                                                                             outline="#00ff88", width=2))))
+    cv.bind("<B1-Motion>", lambda e: st["rect"] and cv.coords(st["rect"], st["x0"], st["y0"], e.x_root, e.y_root))
+    def rel(e):
+        x, y = min(st["x0"], e.x_root), min(st["y0"], e.y_root)
+        w, h = abs(e.x_root - st["x0"]), abs(e.y_root - st["y0"])
         if w > 30 and h > 30:
             st["zone"] = (x, y, w, h)
-            root.destroy()
-
-    cv.bind("<ButtonPress-1>", press)
-    cv.bind("<B1-Motion>", drag)
-    cv.bind("<ButtonRelease-1>", release)
+        root.destroy()
+    cv.bind("<ButtonRelease-1>", rel)
     root.bind("<Escape>", lambda e: root.destroy())
     root.mainloop()
     return st.get("zone")
@@ -106,24 +81,57 @@ def intersects(px, py, pw, ph, zone):
     return not (px + pw <= x or px >= x + w or py + ph <= y or py >= y + h)
 
 
+def set_dark_title(root, dark):
+    try:
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+        v = ctypes.c_int(1 if dark else 0)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), ctypes.sizeof(v))
+    except Exception as e:
+        log(f"dark title error: {e}")
+
+
+class Border:
+    def __init__(self, tk, zone):
+        x, y, w, h = zone
+        self.win = tk.Toplevel()
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        try:
+            self.win.attributes("-transparentcolor", "#ff00ff")
+        except Exception:
+            pass
+        self.win.configure(bg="#ff00ff")
+        self.win.geometry(f"{w + 8}x{h + 8}+{x - 4}+{y - 4}")
+        cv = tk.Canvas(self.win, bg="#ff00ff", highlightthickness=0)
+        cv.pack(fill="both", expand=True)
+        cv.create_rectangle(3, 3, w + 5, h + 5, outline="#00ff88", width=3)
+
+    def close(self):
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
 class Panel:
     def __init__(self, zone, out_path):
         import tkinter as tk
+        self.tk = tk
         self.zone = zone
         self.out_path = out_path
         self.stop_flag = threading.Event()
         self.cancel_flag = threading.Event()
-        self.canvas_img = None
+        self.start_flag = threading.Event()
         self.q = queue.Queue()
         self.root = tk.Tk()
         self.root.title("ScrollShot")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
         self.root.geometry(self._place(zone))
-        self.status = tk.StringVar(value="Recording — scroll the zone")
+        self.status = tk.StringVar(value="Press Start to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
                  font=("Consolas", 10), justify="left", wraplength=340).pack(padx=10, pady=(10, 4), anchor="w")
-        self.info = tk.StringVar(value="waiting for first frame…")
+        self.info = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
                  font=("Consolas", 9)).pack(padx=10, anchor="w")
         self.view = tk.Canvas(self.root, bg="#111111", width=330, height=250, highlightthickness=0)
@@ -134,9 +142,19 @@ class Panel:
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
         tk.Label(self.root, text=f"Save to: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
                  font=("Consolas", 8), wraplength=340, justify="left").pack(padx=10, anchor="w")
+        self.dark = tk.BooleanVar(value=True)
+        row = tk.Frame(self.root, bg="#1e1e1e")
+        row.pack(pady=(6, 0))
+        tk.Checkbutton(row, text="Dark title", variable=self.dark, command=self.apply_dark,
+                       bg="#1e1e1e", fg="#d0d0d0", selectcolor="#333333",
+                       activebackground="#1e1e1e", activeforeground="#ffffff",
+                       font=("Consolas", 9)).pack(side="left")
         btns = tk.Frame(self.root, bg="#1e1e1e")
         btns.pack(pady=4)
-        tk.Button(btns, text="Stop & Save", command=self.finish, bg="#2d6a2d", fg="white",
+        self.btn_start = tk.Button(btns, text="Start", command=self.start_rec, bg="#2d6a2d", fg="white",
+                                   font=("Consolas", 10), width=8)
+        self.btn_start.pack(side="left", padx=4)
+        tk.Button(btns, text="Stop & Save", command=self.finish, bg="#4a4a2d", fg="white",
                   font=("Consolas", 10), width=12).pack(side="left", padx=4)
         tk.Button(btns, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
                   font=("Consolas", 10), width=8).pack(side="left", padx=4)
@@ -145,6 +163,7 @@ class Panel:
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
+        self.border = Border(tk, zone)
         log(f"panel {self.root.geometry()} zone={zone}")
 
     @staticmethod
@@ -152,21 +171,31 @@ class Panel:
         import tkinter as tk
         x, y, w, h = zone
         r = tk.Tk(); sw, sh = r.winfo_screenwidth(), r.winfo_screenheight(); r.destroy()
-        pw, ph = 380, 470
-        for cx, cy in [(x + w + 10, y), (x - pw - 10, y), (x, y + h + 10), (x, y - ph - 10),
-                       (sw - pw - 10, 10), (10, 10), (sw - pw - 10, sh - ph - 10), (10, sh - ph - 10)]:
+        pw, ph = 380, 520
+        for cx, cy in [(x + w + 12, y), (x - pw - 12, y), (x, y + h + 12), (x, y - ph - 12),
+                       (sw - pw - 12, 12), (12, 12), (sw - pw - 12, sh - ph - 12), (12, sh - ph - 12)]:
             cx, cy = max(0, min(cx, sw - pw)), max(0, min(cy, sh - ph))
             if not intersects(cx, cy, pw, ph, zone):
                 return f"{pw}x{ph}+{cx}+{cy}"
-        return f"{pw}x{ph}+{max(0, sw - pw - 10)}+10"
+        return f"{pw}x{ph}+{max(0, sw - pw - 12)}+12"
 
     def put(self, kind, payload):
         self.q.put((kind, payload))
 
+    def apply_dark(self):
+        set_dark_title(self.root, self.dark.get())
+
     def start(self):
+        self.apply_dark()
         self.worker.start()
         self.root.after(80, self.poll)
         self.root.mainloop()
+
+    def start_rec(self):
+        if not self.start_flag.is_set():
+            self.start_flag.set()
+            self.btn_start.config(state="disabled")
+            self.put("status", "Recording")
 
     def poll(self):
         try:
@@ -178,8 +207,6 @@ class Panel:
                     self.info.set(payload)
                 elif kind == "preview":
                     self.show(payload)
-                elif kind == "done":
-                    self.status.set(payload)
         except queue.Empty:
             pass
         except Exception as e:
@@ -213,14 +240,20 @@ class Panel:
     def cancel(self):
         self.cancel_flag.set()
         self.stop_flag.set()
+        self.border.close()
         self.root.after(200, self.root.destroy)
 
     def record_loop(self):
         canvas = None
         prev = None
+        frames = 0
         last_new = time.monotonic()
         scrolled = False
-        frames = 0
+        while not self.start_flag.is_set():
+            if self.stop_flag.is_set() or self.cancel_flag.is_set():
+                return
+            time.sleep(0.05)
+        self.put("status", "Recording")
         try:
             while not self.stop_flag.is_set():
                 t0 = time.monotonic()
@@ -228,23 +261,24 @@ class Panel:
                 frames += 1
                 if canvas is None:
                     canvas = f
-                    last_new = time.monotonic()
                     self.put("preview", canvas)
-                    self.put("status", "Recording — scroll the zone")
+                    self.put("info", f"zone {self.zone[2]}x{self.zone[3]}  recording…")
                 elif prev is not None:
                     dy, score = find_dy(prev, f)
                     if dy:
                         canvas = np.vstack([canvas, f[f.shape[0] - dy:]])
                         last_new = time.monotonic()
                         scrolled = True
-                        self.put("status", f"captured +{dy}px  (total {canvas.shape[0]}px)")
-                        self.put("info", f"frames: {frames}  dy: {dy}  score: {score:.1f}")
                         self.put("preview", canvas)
+                        self.put("info", f"frames: {frames}  dy: {dy}  total {canvas.shape[0]}px")
                         log(f"dy={dy} score={score:.1f} canvas={canvas.shape[0]}")
                 prev = f
-                if scrolled and time.monotonic() - last_new > IDLE_SEC:
-                    log("idle stop")
-                    break
+                if scrolled:
+                    left = IDLE_SEC - (time.monotonic() - last_new)
+                    self.put("status", f"Recording · auto-save in {max(0, left):.0f}s")
+                    if left <= 0:
+                        log("idle stop")
+                        break
                 dt = 1.0 / FPS - (time.monotonic() - t0)
                 if dt > 0:
                     time.sleep(dt)
@@ -287,7 +321,7 @@ def selftest():
         ref = tall[:canvas.shape[0]]
         diff = float(np.abs(canvas.astype(np.int16) - ref.astype(np.int16)).mean())
         print(f"step={step:3d} canvas={canvas.shape[0]:5d} diff={diff:.3f}")
-        assert diff < 0.5, f"stitch mismatch at step {step}"
+        assert diff < 0.5
     print("selftest OK")
 
 
