@@ -185,7 +185,7 @@ class Panel:
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
 
         self.border_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(self.root, text="Show record area border", variable=self.border_var,
+        tk.Checkbutton(self.root, text="Show border", variable=self.border_var,
                        command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
                        selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff",
@@ -312,16 +312,18 @@ class Panel:
 
     def shot(self):
         if not self.zone:
-            self._st = "Select Area first"; self._render()
-            return
+            self._select_area()
+            if not self.zone:
+                return
         try:
             img = grab(self.zone)
             self.out_path = self._new_path()
             Image.fromarray(img).save(self.out_path)
             self.put("preview", img)
             self._st = "Screenshot saved"; self._render()
-            self.info.set(f"{img.shape[1]}x{img.shape[0]}")
+            self._inf = f"{img.shape[1]}x{img.shape[0]}"; self._render()
             log(f"shot saved {self.out_path}")
+            self.copy_image()
         except Exception as e:
             log(f"shot error: {e}")
             self._st = f"shot error: {e}"; self._render()
