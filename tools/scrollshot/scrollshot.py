@@ -12,7 +12,7 @@ FPS = 15
 MAX_DY = 260          # max px shift between two consecutive frames
 MIN_DY = 6            # smaller shifts are treated as "no scroll"
 THRESH = 12.0         # mean-abs profile error accepted as a match
-IDLE_SEC = 3.0        # auto-stop after this long without new content
+IDLE_SEC = 5.0        # auto-stop after this long without new content
 LOG_PATH = None
 
 
@@ -206,6 +206,7 @@ class Panel:
         canvas = None
         prev = None
         last_new = time.monotonic()
+        scrolled = False
         frames = 0
         try:
             while not self.stop_flag.is_set():
@@ -222,12 +223,13 @@ class Panel:
                     if dy:
                         canvas = np.vstack([canvas, f[f.shape[0] - dy:]])
                         last_new = time.monotonic()
+                        scrolled = True
                         self.status.set(f"captured +{dy}px  (total {canvas.shape[0]}px)")
                         self.info.set(f"frames: {frames}  dy: {dy}  score: {score:.1f}")
                         self.canvas_img = canvas
                         log(f"dy={dy} score={score:.1f} canvas={canvas.shape[0]}")
                 prev = f
-                if time.monotonic() - last_new > IDLE_SEC:
+                if scrolled and time.monotonic() - last_new > IDLE_SEC:
                     log("idle stop")
                     break
                 dt = 1.0 / FPS - (time.monotonic() - t0)
@@ -247,10 +249,6 @@ class Panel:
             self.canvas_img = canvas
             self.status.set(f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
             self.info.set(f"frames: {frames}  → {self.out_path}")
-            try:
-                os.startfile(self.folder)
-            except Exception:
-                pass
         except Exception as e:
             log(f"save error: {e}")
             self.status.set(f"save error: {e}")
