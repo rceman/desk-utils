@@ -246,7 +246,6 @@ class Panel:
         self.zone = zone
         self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
         self.btn_rec.config(state="normal")
-        self.root.geometry(self._place(zone))
         self.apply_border()
         self.status.set("Press Start")
         log(f"zone={zone}")
