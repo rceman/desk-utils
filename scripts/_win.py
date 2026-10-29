@@ -54,7 +54,10 @@ def procs(name):
     if not out or out == "null":
         return []
     import json
-    rows = json.loads(out)
+    try:
+        rows = json.loads(out)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"process discovery failed for {name}: {e}: {out[:200]}")
     if isinstance(rows, dict):
         rows = [rows]
     return [(int(r["ProcessId"]), r.get("CommandLine") or "") for r in rows]

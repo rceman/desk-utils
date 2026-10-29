@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build + deploy diskhound.exe (isolated staging, checked cargo/mt, kill+wait, hash)."""
+"""Build + deploy diskhound.exe (isolated staging, checked cargo/mt, kill+wait, hash).
+
+Manifest is embedded into the STAGED exe before publication — a mt failure aborts
+the deploy and never touches the live binary.
+"""
 import os, shutil, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -10,7 +14,9 @@ STAGE_WIN = r"C:\Tools\dh-build-diskhound"
 STAGE = wsl_path(STAGE_WIN)
 DST_WIN = r"C:\Tools\diskhound\diskhound.exe"
 DST = wsl_path(DST_WIN)
+MATCH = r"diskhound\diskhound.exe"
 EXE = os.path.join(STAGE, "target", "release", "diskhound.exe")
+EXE_WIN = STAGE_WIN + r"\target\release\diskhound.exe"
 MANIFEST = os.path.join(REPO, "diskhound.exe.manifest")
 
 
@@ -29,9 +35,23 @@ def main():
         if not os.path.exists(EXE):
             fail("cargo did not produce diskhound.exe")
 
-        killed = kill_matching("diskhound", "diskhound.exe")
+        # embed manifest into the STAGED exe — failure aborts before publish (A1)
+        stage_manifest = os.path.join(STAGE, "diskhound.exe.manifest")
+        shutil.copy2(MANIFEST, stage_manifest)
+        mt = ps("Get-ChildItem 'C:\\Program Files (x86)\\Windows Kits\\10\\bin' -Recurse "
+                "-Filter mt.exe -ErrorAction SilentlyContinue | "
+                "Where-Object {$_.FullName -like '*x64*'} | Select-Object -First 1 -ExpandProperty FullName",
+                check=False)
+        if mt:
+            ps(f"& '{mt}' -nologo -manifest '{STAGE_WIN}\\diskhound.exe.manifest' "
+               f"'-outputresource:{EXE_WIN};#1' | Out-Null; exit $LASTEXITCODE")
+            info("manifest embedded into staged exe")
+        else:
+            info("no mt.exe — manifest ships loose next to exe")
+
+        killed = kill_matching("diskhound", MATCH)
         info(f"killed: {killed or 'none'}")
-        if not wait_gone("diskhound", timeout=15):
+        if not wait_gone("diskhound", MATCH, timeout=15):
             fail("diskhound.exe still running — close it first")
 
         tmp = DST + ".new"
@@ -40,21 +60,8 @@ def main():
             fail("hash mismatch after staging")
         os.replace(tmp, DST)
         shutil.copy2(MANIFEST, os.path.join("/mnt/c/Tools/diskhound", "diskhound.exe.manifest"))
-
-        mt = ps("Get-ChildItem 'C:\\Program Files (x86)\\Windows Kits\\10\\bin' -Recurse "
-                "-Filter mt.exe -ErrorAction SilentlyContinue | "
-                "Where-Object {$_.FullName -like '*x64*'} | Select-Object -First 1 -ExpandProperty FullName",
-                check=False)
-        if mt:
-            r = ps(f"& '{mt}' -nologo -manifest 'C:\\Tools\\diskhound\\diskhound.exe.manifest' "
-                   f"'-outputresource:{DST_WIN};#1'; exit $LASTEXITCODE", check=False)
-            if "mt.exe" not in r.lower():
-                fail(f"mt.exe embed failed: {r}")
-            info("manifest embedded")
-        else:
-            info("no mt.exe — manifest shipped loose")
-
         info(f"published -> {DST_WIN} (sha {sha256(DST)[:12]})")
+
         if launch:
             ps(f"Start-Process '{DST_WIN}'")
             info("launched")

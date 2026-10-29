@@ -158,6 +158,7 @@ class Border:
         self._cursor = None
 
         self.win = tk.Toplevel()
+        self.locked = False
         self.win.withdraw()  # Configure and draw before showing any pixels.
         if self.win.tk.call("tk", "windowingsystem") != "win32":
             self.win.destroy()
@@ -534,6 +535,7 @@ class Panel:
             self.border = None
         if self.border_var.get() and self.zone:
             self.border = Border(self.tk, self.zone, self._zone_changed)
+            self.border.locked = self.recording
 
     def _place(self, zone):
         x, y, w, h = zone
@@ -584,10 +586,14 @@ class Panel:
             self.stop_flag.clear()
             self.start_flag.set()
             self.recording = True
+            if self.border:
+                self.border.locked = True
             self.btn_rec.config(text="Stop & Save", bg="#4a4a2d")
             self._st = "Recording"; self._render()
         else:
             self.stop_flag.set()
+            if self.border:
+                self.border.locked = False
             self.btn_rec.config(state="disabled")
             self._st = "Stopping…"; self._render()
 
@@ -595,7 +601,13 @@ class Panel:
         if self.recording:
             self._st = "Finish recording first"; self._render()
             return
-        zone = select_zone(self.root, min_h=20)
+        if self.border:
+            self.border.win.withdraw()
+        try:
+            zone = select_zone(self.root, min_h=20)
+        finally:
+            if self.border:
+                self.border.win.deiconify()
         if zone is None:
             return
         try:
@@ -835,10 +847,10 @@ class Panel:
             frames = scrolls = 0
             self.put("status", "Recording")
             last_new = time.monotonic()
-            last_tick = time.monotonic()
+            last_tick = None
             try:
                 while not self.stop_flag.is_set():
-                    if self._auto_flag and time.monotonic() - last_tick >= self.scroll_iv:
+                    if last_tick is not None and self._auto_flag and time.monotonic() - last_tick >= self.scroll_iv:
                         last_tick = time.monotonic()
                         try:
                             import ctypes
@@ -853,6 +865,7 @@ class Panel:
                     fh = f.shape[0]
                     if canvas is None:
                         canvas, anchor, cap_h = f, f, fh
+                        last_tick = time.monotonic()
                         self.put("preview", canvas)
                     else:
                         if frames % 5 == 0:

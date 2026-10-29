@@ -15,6 +15,7 @@ DST_WIN = r"C:\Tools\diskhound\tools\scrollshot\scrollshot.py"
 DST = wsl_path(DST_WIN)
 LOG_WSL = "/mnt/c/Users/therceman/Pictures/Screenshots/ScrollShot/scrollshot.log"
 PYW = r"C:\Program Files\Python312\pythonw.exe"
+MATCH = r"diskhound\tools\scrollshot\scrollshot.py"  # full-path fragment (A5)
 
 
 def main():
@@ -35,9 +36,9 @@ def main():
         info("scrollshot.py published (hash-verified)")
 
         before = {p for p, _ in procs("pythonw")}
-        killed = kill_matching("pythonw", "scrollshot.py")
+        killed = kill_matching("pythonw", MATCH)
         info(f"killed scrollshot pythonw: {killed or 'none'}")
-        if not wait_gone("pythonw", "scrollshot.py"):
+        if not wait_gone("pythonw", MATCH):
             fail("old scrollshot still running after 10s")
 
         mark = log_size(LOG_WSL)
@@ -46,7 +47,7 @@ def main():
         deadline = time.time() + 15
         while time.time() < deadline:
             pid = next((p for p, c in procs("pythonw")
-                        if "scrollshot.py" in c.lower() and p not in before), None)
+                        if MATCH.lower() in c.lower() and p not in before), None)
             fresh = log_since(LOG_WSL, mark)
             if pid and "panel ready" in fresh:
                 info(f"UP pid={pid}, fresh panel ready OK")
