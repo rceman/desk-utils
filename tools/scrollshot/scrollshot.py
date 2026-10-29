@@ -7,9 +7,10 @@ import numpy as np
 from PIL import Image, ImageTk
 
 IDLE_LIMIT = 3
+SAME_FRAME_DIFF = 2.0
 SETTLE_MS = 300
-MIN_OVERLAP = 0.25
-MSE_LIMIT = 12.0
+MIN_OVERLAP = 0.08
+MSE_LIMIT = 30.0
 
 
 # ---------- imaging ----------
@@ -62,6 +63,11 @@ def best_shift(prev_img, new_img):
     s, score = find_shift(sig2(prev_img), sig2(new_img),
                           verify=lambda s: full_score(prev_img, new_img, s))
     return s, score
+
+
+def full_diff(a, b):
+    n = min(a.shape[0], b.shape[0])
+    return float(np.abs(a[:n].astype(np.int16) - b[:n].astype(np.int16)).mean())
 
 
 def contains(canvas_img, new_img):
@@ -250,21 +256,24 @@ class Panel:
                 except queue.Empty:
                     continue
                 time.sleep(SETTLE_MS / 1000.0)
-                while not q.empty():
-                    q.get()
                 new = grab(self.zone)
-                s, score = best_shift(self.frames[-1], new)
-                if score < MSE_LIMIT and s > 0:
-                    self.frames.append(new)
-                    idle = 0
-                    self.events.put(("status", f"captured frame {len(self.frames)} (+{s}px)"))
-                    self.events.put(("info", f"frames: {len(self.frames)}  last shift: {s}px"))
-                    self.events.put(("preview", new))
-                else:
+                diff = full_diff(self.frames[-1], new)
+                if diff < SAME_FRAME_DIFF:
                     idle += 1
-                    self.events.put(("status", f"no change ({idle}/{IDLE_LIMIT}) — scroll more or press Stop"))
+                    self.events.put(("status", f"same picture ({idle}/{IDLE_LIMIT}) — scroll more or press Stop"))
                     if idle >= IDLE_LIMIT:
                         break
+                    continue
+                idle = 0
+                s, score = best_shift(self.frames[-1], new)
+                self.frames.append(new)
+                if s > 0 and score < MSE_LIMIT:
+                    self.events.put(("status", f"captured frame {len(self.frames)} (+{s}px, score {score:.1f})"))
+                    self.events.put(("info", f"frames: {len(self.frames)}  last shift: {s}px"))
+                else:
+                    self.events.put(("status", f"captured frame {len(self.frames)} (no overlap, full frame)"))
+                    self.events.put(("info", f"frames: {len(self.frames)}  overlap not found"))
+                self.events.put(("preview", new))
         finally:
             listener.stop()
             if len(self.frames) >= 1:
