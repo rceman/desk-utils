@@ -717,7 +717,7 @@ class Panel:
         import ctypes
         from ctypes import wintypes
         u = ctypes.windll.user32
-        ok = u.RegisterHotKey(None, 1, 0, 0x2C)  # VK_SNAPSHOT -> this thread's queue
+        ok = u.RegisterHotKey(None, 1, 0, 0x2C)  # VK_SNAPSHOT
         log(f"hotkey={ok} err={ctypes.windll.kernel32.GetLastError()}")
         m = wintypes.MSG()
         while u.GetMessageW(ctypes.byref(m), None, 0, 0) > 0:
