@@ -105,6 +105,7 @@ const NIF_SHOWTIP: u32 = 0x80;
 const TPM_RIGHTBUTTON: u32 = 0x0002;
 const MF_STRING: u32 = 0;
 const MF_CHECKED: u32 = 8;
+const ID_SCROLL: usize = 5;
 const ID_OPEN: usize = 1;
 const ID_OPEN_ADMIN: usize = 4;
 const ID_REFRESH: usize = 2;
@@ -1288,6 +1289,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 AppendMenuW(m, MF_STRING, ID_OPEN, wide("Open diskhound").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_OPEN_ADMIN, wide("Open as administrator").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
+                AppendMenuW(m, MF_STRING, ID_SCROLL, wide("Scroll Screen").as_ptr());
                 let wf = if WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed) { MF_CHECKED } else { 0 };
                 AppendMenuW(m, wf, ID_WIDGET, wide("Taskbar widget").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
@@ -1312,6 +1314,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
             }
             ID_REFRESH => {
                 update_tray(hwnd);
+                0
+            }
+            ID_SCROLL => {
+                let py = "C:\\Program Files\\Python312\\pythonw.exe";
+                let script = format!("{}/tools/scrollshot/scrollshot.py", exe_dir());
+                ShellExecuteW(hwnd, std::ptr::null(), wide(py).as_ptr(), wide(&format!("\"{}\"", script)).as_ptr(), std::ptr::null(), 1);
                 0
             }
             ID_WIDGET => {
