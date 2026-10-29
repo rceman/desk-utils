@@ -557,6 +557,7 @@ class Panel:
         self.root.update_idletasks()
         self.root.after(150, lambda: set_dark_title(self.root, self._sys_dark()))
         self.worker.start()
+        threading.Thread(target=self._prtscr_hook, daemon=True).start()
         self.root.after(80, self.poll)
         self.root.mainloop()
 
@@ -717,14 +718,17 @@ class Panel:
         CB = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
         def proc(nc, wp, lp):
-            if wp == 0x100 and self._prtscr_flag:
-                if ctypes.cast(lp, ctypes.POINTER(KB)).contents.vk == 0x2C:
+            if wp == 0x100:
+                vk = ctypes.cast(lp, ctypes.POINTER(KB)).contents.vk
+                log(f"key vk={vk:#x} flag={self._prtscr_flag}")
+                if self._prtscr_flag and vk in (0x2C, 0x2A):
                     self.put("shot", None)
                     return 1
             return u.CallNextHookEx(None, nc, wp, lp)
 
         self._kb_cb = CB(proc)
         self._hook = u.SetWindowsHookExW(13, self._kb_cb, None, 0)
+        log(f"kb hook={self._hook} err={u.GetLastError()}")
         m = wintypes.MSG()
         while u.GetMessageW(ctypes.byref(m), None, 0, 0) > 0:
             pass
