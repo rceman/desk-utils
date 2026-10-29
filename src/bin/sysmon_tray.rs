@@ -143,6 +143,7 @@ static CPU_USER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::ne
 static CPU_SYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static RAM_USED_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static RAM_TOTAL_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static POPUP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static POPUP_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static POPUP_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
@@ -1026,7 +1027,11 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -
             EndPaint(hwnd, &ps);
             0
         }
-        WM_LBUTTONUP => { ShowWindow(hwnd, 0); 0 }
+        WM_LBUTTONUP => {
+            ShowWindow(hwnd, 0);
+            POPUP_ON.store(false, std::sync::atomic::Ordering::Relaxed);
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, w, l),
     }
 }
@@ -1035,7 +1040,14 @@ fn toggle_popup() {
     use std::sync::atomic::Ordering::Relaxed;
     unsafe {
         let mut ph = POPUP_HWND.load(Relaxed) as HWND;
-        if !ph.is_null() && ShowWindow(ph, 4 /*SW_SHOWNOACTIVATE*/) == 0 { }
+        if POPUP_ON.swap(false, Relaxed) {
+            // second click -> hide
+            if !ph.is_null() {
+                ShowWindow(ph, 0);
+            }
+            return;
+        }
+        POPUP_ON.store(true, Relaxed);
         if ph.is_null() {
             let inst = GetModuleHandleW(std::ptr::null_mut());
             let c = wide("sysmon_popup");
