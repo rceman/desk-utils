@@ -223,7 +223,6 @@ class Panel:
             self.btn_start.config(state="disabled")
             self.btn_stop.config(state="normal")
             self.status.set("Recording")
-        last_new = time.monotonic()
 
     def poll(self):
         try:
@@ -276,7 +275,6 @@ class Panel:
         canvas = None
         prev = None
         frames = 0
-        scrolled = False
         pos = 0
         captured_h = 0
         while not self.start_flag.is_set():
@@ -284,6 +282,7 @@ class Panel:
                 return
             time.sleep(0.05)
         self.put("status", "Recording")
+        last_new = time.monotonic()
         try:
             while not self.stop_flag.is_set():
                 t0 = time.monotonic()
@@ -308,7 +307,6 @@ class Panel:
                             captured_h += f.shape[0] - start
                             pos = new_pos
                             last_new = time.monotonic()
-                            scrolled = True
                             self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-3:]]))
                             self.put("info", f"frames: {frames}  dy: {dy}  total {captured_h}px")
                             log(f"dy={dy} pos={pos} start={start} total={captured_h}")
