@@ -169,14 +169,16 @@ class Panel:
         self.root.configure(bg="#1e1e1e")
         self.root.resizable(False, False)
         self.status = tk.StringVar(value="Select Area to begin")
+        self._st = "Select Area to begin"
+        self._inf = ""
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
                  font=("Consolas", 9), justify="center", wraplength=360, height=1,
                  anchor="center").pack(padx=10, pady=(6, 0), fill="x")
-        self.info = tk.StringVar(value="")
-        tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
-                 font=("Consolas", 8), height=0, anchor="center", justify="center").pack(padx=10, fill="x")
         self.view = tk.Canvas(self.root, bg="#111111", width=360, height=200, highlightthickness=0)
-        self.view.pack(padx=10, pady=(2, 4))
+        self.view.pack(padx=10, pady=(2, 0))
+        self.rec = tk.StringVar(value="")
+        tk.Label(self.root, textvariable=self.rec, bg="#1e1e1e", fg="#c08f4f",
+                 font=("Consolas", 8), height=0, anchor="e", justify="right").pack(padx=10, fill="x")
         global LOG_PATH
         self.folder = out_dir
         os.makedirs(self.folder, exist_ok=True)
@@ -215,7 +217,7 @@ class Panel:
         def _cbexc(exc, val, tb):
             import traceback
             log("callback error:\n" + "".join(traceback.format_exception(exc, val, tb)))
-            self.status.set("error — see log")
+            self._st = "error — see log"; self._render()
         self.root.report_callback_exception = _cbexc
         self.root.update_idletasks()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
@@ -235,11 +237,11 @@ class Panel:
         except Exception:
             import traceback
             log(f"select_area error:\n{traceback.format_exc()}")
-            self.status.set("select failed — see log")
+            self._st = "select failed — see log"; self._render()
 
     def _select_area(self):
         if self.recording:
-            self.status.set("Finish recording first")
+            self._st = "Finish recording first"; self._render()
             return
         zone = select_zone(self.root)
         if zone is None:
@@ -248,14 +250,14 @@ class Panel:
             self.root.title("ScrollShot")
             self.btn_rec.config(state="disabled")
             self.apply_border()
-            self.status.set("Select Area to begin")
+            self._st = "Select Area to begin"; self._render()
             log("zone cleared")
             return
         self.zone = zone
         self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
         self.btn_rec.config(state="normal")
         self.apply_border()
-        self.status.set("Press Start")
+        self._st = "Press Start"; self._render()
         log(f"zone={zone}")
 
     def apply_border(self):
@@ -302,27 +304,27 @@ class Panel:
             self.start_flag.set()
             self.recording = True
             self.btn_rec.config(text="Stop & Save", bg="#4a4a2d")
-            self.status.set("Recording")
+            self._st = "Recording"; self._render()
         else:
             self.stop_flag.set()
             self.btn_rec.config(state="disabled")
-            self.status.set("Stopping…")
+            self._st = "Stopping…"; self._render()
 
     def shot(self):
         if not self.zone:
-            self.status.set("Select Area first")
+            self._st = "Select Area first"; self._render()
             return
         try:
             img = grab(self.zone)
             self.out_path = self._new_path()
             Image.fromarray(img).save(self.out_path)
             self.put("preview", img)
-            self.status.set("Screenshot saved")
+            self._st = "Screenshot saved"; self._render()
             self.info.set(f"{img.shape[1]}x{img.shape[0]}")
             log(f"shot saved {self.out_path}")
         except Exception as e:
             log(f"shot error: {e}")
-            self.status.set(f"shot error: {e}")
+            self._st = f"shot error: {e}"; self._render()
 
     def _new_path(self):
         base = f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}_{datetime.datetime.now().microsecond//1000:03d}"
@@ -338,9 +340,13 @@ class Panel:
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "status":
-                    self.status.set(payload)
+                    self._st = payload
+                    self._render()
                 elif kind == "info":
-                    self.info.set(payload)
+                    self._inf = payload
+                    self._render()
+                elif kind == "rec":
+                    self.rec.set(payload)
                 elif kind == "preview":
                     self.show(payload)
                 elif kind == "btn":
@@ -349,6 +355,9 @@ class Panel:
         except queue.Empty:
             pass
         self.root.after(80, self.poll)
+
+    def _render(self):
+        self.status.set(f"{self._st}   {self._inf}" if self._inf else self._st)
 
     def show(self, arr):
         try:
@@ -378,7 +387,7 @@ class Panel:
     def copy_image(self):
         try:
             if not (self.out_path and os.path.exists(self.out_path)):
-                self.status.set("Nothing to copy yet")
+                self._st = "Nothing to copy yet"; self._render()
                 return
             import subprocess
             q = self.out_path.replace("'", "''")
@@ -387,7 +396,7 @@ class Panel:
                   '[System.Windows.Forms.Clipboard]::SetImage($img);$img.Dispose()')
             subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
                              creationflags=0x08000000)
-            self.status.set("Image copied to clipboard")
+            self._st = "Image copied to clipboard"; self._render()
             log(f"copy {self.out_path}")
         except Exception as e:
             log(f"copy error: {e}")
@@ -397,7 +406,7 @@ class Panel:
             path = self.out_path if (self.out_path and os.path.exists(self.out_path)) else self.folder
             self.root.clipboard_clear()
             self.root.clipboard_append(path)
-            self.status.set("Path copied to clipboard")
+            self._st = "Path copied to clipboard"; self._render()
         except Exception as e:
             log(f"copy path: {e}")
 
@@ -452,7 +461,7 @@ class Panel:
                     if frames % 5 == 0 and chunks:
                         self.put("preview", np.vstack([canvas[-200:], *chunks[-2:]]))
                     left = IDLE_SEC - (time.monotonic() - last_new)
-                    self.put("status", f"Recording · auto-save in {max(0, int(left + 0.999))}s")
+                    self.put("rec", f"auto-save in {max(0, int(left + 0.999))}s")
                     if left <= 0:
                         log("idle stop")
                         break
@@ -464,6 +473,7 @@ class Panel:
                 log(f"record error: {e}\n{traceback.format_exc()}")
                 self.put("status", f"error: {e}")
                 self.put("info", "failed — nothing saved")
+                self.put("rec", "")
                 self.put("btn", "start")
                 self.start_flag.clear()
                 self.stop_flag.clear()
