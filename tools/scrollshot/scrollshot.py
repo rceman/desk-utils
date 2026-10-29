@@ -150,7 +150,7 @@ class Border:
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
         self.grip.configure(cursor="fleur")
-        lb = tk.Label(self.grip, text="✥", bg="#ffcc00", fg="#333333",
+        lb = tk.Label(self.grip, text="✥", bg="#00ff88", fg="#1a1a1a",
                       font=("Segoe UI Symbol", 14, "bold"), cursor="fleur")
         lb.pack(fill="both", expand=True)
         lb.bind("<ButtonPress-1>", self._gstart)
