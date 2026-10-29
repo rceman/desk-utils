@@ -1050,10 +1050,18 @@ fn popup_lines() -> Vec<String> {
         if gp >= 0 { format!(" GPU: {}% {}", gp, if gt >= 0 { format!("{} °C", gt) } else { String::new() }) } else { String::new() }));
     let c = CDX_PCT.load(Relaxed);
     let cr = CDX_RESET.load(Relaxed);
-    v.push(format!("Codex 5h: {}", if c >= 0 {
-        if cr > 0 { format!("{}% left, resets {}", 100 - c, local_hhmm(cr)) } else { format!("{}% left", 100 - c) }
-    } else { "—".into() }));
-    v.push("Devin weekly: —".to_string());
+    let plan = std::env::var("USERPROFILE").ok()
+        .and_then(|h| std::fs::read_to_string(format!("{h}\\.codex\\limits_cache.json")).ok())
+        .and_then(|t| {
+            let i = t.find("\"plan\":\"")? + 8;
+            Some(t[i..].chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect::<String>())
+        })
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "?".into());
+    v.push(format!("Codex [{}]: {}", plan, if c >= 0 {
+        if cr > 0 { format!("{}% 5h, resets {}", 100 - c, local_hhmm(cr)) } else { format!("{}% 5h", 100 - c) }
+    } else { "— 5h".into() }));
+    v.push("Devin [main]: — weekly".to_string());
     v
 }
 
