@@ -5,12 +5,15 @@ from PIL import Image, ImageTk
 
 # Must run before any window is created: logical px == physical px for mss/grab
 try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PerMonitorV2
+    ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # PER_MONITOR_AWARE_V2
 except Exception:
     try:
-        ctypes.windll.user32.SetProcessDPIAware()
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
-        pass
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 FPS = 15
 MAX_DY = 260
@@ -38,37 +41,37 @@ def grab(zone):
 
 
 def find_dy(prev, new):
-    """Signed vertical shift: >0 content moved down, <0 moved up, 0 = no motion."""
-    ga = prev.mean(axis=2)
-    gb = new.mean(axis=2)
-    pa, pb = ga.mean(axis=1), gb.mean(axis=1)
-    h = len(pa)
-    if h < 120:
+    """Signed vertical shift: >0 down, <0 up, 0 = no motion."""
+    ga = prev.astype(np.float32)
+    gb = new.astype(np.float32)
+    h = ga.shape[0]
+    if h < 100:
         return 0, 999.0
+    pa, pb = ga.mean(axis=1), gb.mean(axis=1)
     if float(pa.std()) < 1.5 or float(pb.std()) < 1.5:
         return 0, 999.0
-    base = float(np.abs(pa - pb).mean())
-    cands = []
+    base = float(np.abs(ga - gb).mean())   # zero-motion pixel error
     lim = min(MAX_DY, h - 60)
-    for dy in list(range(MIN_DY, lim + 1)) + list(range(-MIN_DY, -lim - 1, -1)):
+    cands = []
+    for dy in list(range(1, lim + 1)) + list(range(-1, -lim - 1, -1)):
         if dy > 0:
-            score = float(np.abs(pa[dy:] - pb[:h - dy]).mean())
+            a, b = pa[dy:], pb[:h - dy]
         else:
-            d = -dy
-            score = float(np.abs(pa[:h - d] - pb[d:]).mean())
-        cands.append((score, dy))
-    cands.sort()
-    for score, dy in cands[:3]:
-        if score > THRESH or score >= base * 0.75:
-            continue
-        if dy > 0:
-            a = ga[dy:h:7].astype(np.int16); b = gb[:h - dy:7].astype(np.int16)
-        else:
-            d = -dy
-            a = ga[:h - d:7].astype(np.int16); b = gb[d:h:7].astype(np.int16)
+            a, b = pa[:h + dy], pb[-dy:]
         n = min(len(a), len(b))
-        v = float(np.abs(a[:n] - b[:n]).mean())
-        if v < THRESH and v < base * 0.75:
+        if n < 20:
+            continue
+        cands.append((float(np.abs(a[:n] - b[:n]).mean()), dy))
+    if not cands:
+        return 0, base
+    cands.sort()
+    for _, dy in cands[:5]:
+        if dy > 0:
+            a, b = ga[dy:], gb[:h - dy]
+        else:
+            a, b = ga[:h + dy], gb[-dy:]
+        v = float(np.abs(a - b).mean())
+        if v < base * 0.6 and v < THRESH * 2:
             return dy, v
     return 0, base
 
@@ -288,12 +291,14 @@ class Panel:
         self.root.after(200, self.root.destroy)
 
     def record_loop(self):
-        chunks = []
+        chunks = []          # bottom-appended rows
+        top_chunks = []      # prepended rows (scroll above start)
         canvas = None
-        prev = None
+        anchor = None        # last frame with accepted motion
+        pos = 0              # doc position of anchor top
+        top = 0              # doc top of captured region
+        cap_h = 0            # doc height of captured region
         frames = 0
-        pos = 0
-        captured_h = 0
         while not self.start_flag.is_set():
             if self.stop_flag.is_set() or self.cancel_flag.is_set():
                 return
@@ -305,32 +310,36 @@ class Panel:
                 t0 = time.monotonic()
                 f = grab(self.zone)
                 frames += 1
+                fh = f.shape[0]
                 if canvas is None:
                     canvas = f
-                    captured_h = f.shape[0]
-                    pos = 0
+                    anchor = f
+                    cap_h = fh
                     self.put("preview", canvas)
                     self.put("info", f"zone {self.zone[2]}x{self.zone[3]}  recording…")
-                elif prev is not None:
-                    dy, score = find_dy(prev, f)
-                    if dy < 0:
-                        pos = max(0, pos + dy)
-                        log(f"dy={dy} (up) pos={pos}")
-                    elif dy:
+                else:
+                    dy, score = find_dy(anchor, f)
+                    log(f"frame {frames}: dy={dy} score={score:.1f} pos={pos}")
+                    if dy:
+                        anchor = f
+                        last_new = time.monotonic()
                         new_pos = pos + dy
-                        start = max(0, captured_h - new_pos)
-                        if start < f.shape[0]:
-                            chunks.append(f[start:])
-                            captured_h += f.shape[0] - start
-                            pos = new_pos
-                            last_new = time.monotonic()
-                            self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-3:]]))
-                            self.put("info", f"frames: {frames}  dy: {dy}  total {captured_h}px")
-                            log(f"dy={dy} pos={pos} start={start} total={captured_h}")
+                        if new_pos < top:
+                            n = min(top - new_pos, fh)
+                            top_chunks.insert(0, f[:n].copy())
+                            top, cap_h = new_pos, cap_h + n
+                            log(f"prepend {n} rows top={top}")
+                        elif new_pos + fh > top + cap_h:
+                            start_r = top + cap_h - new_pos
+                            chunks.append(f[start_r:].copy())
+                            cap_h += fh - start_r
+                            log(f"append {fh - start_r} rows cap_h={cap_h}")
                         else:
-                            pos = new_pos
-                            log(f"dy={dy} pos={pos} covered -> skip")
-                prev = f
+                            log("frame covered")
+                        pos = new_pos
+                        total = cap_h
+                        self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-2:]]))
+                        self.put("info", f"frames: {frames}  dy: {dy}  total {total}px")
                 left = IDLE_SEC - (time.monotonic() - last_new)
                 self.put("status", f"Recording · auto-save in {max(0, int(left + 0.999))}s")
                 if left <= 0:
@@ -340,7 +349,8 @@ class Panel:
                 if dt > 0:
                     time.sleep(dt)
         except Exception as e:
-            log(f"record error: {e}")
+            import traceback
+            log(f"record error: {e}\n{traceback.format_exc()}")
             self.put("status", f"error: {e}")
             self.put("info", "recording failed — nothing saved")
             self.border.close()
@@ -350,8 +360,13 @@ class Panel:
             return
         if canvas is None:
             return
-        if chunks:
-            canvas = np.vstack([canvas, *chunks])
+        if chunks or top_chunks:
+            try:
+                canvas = np.vstack([*top_chunks, canvas, *chunks])
+            except Exception as e:
+                log(f"final concat error: {e}")
+                self.put("status", f"save error: {e}")
+                return
         if self.cancel_flag.is_set():
             log("cancelled before save")
             return
@@ -368,7 +383,8 @@ class Panel:
             self.put("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
             self.put("info", f"frames: {frames}  → {self.out_path}")
         except Exception as e:
-            log(f"save error: {e}")
+            import traceback
+            log(f"save error: {e}\n{traceback.format_exc()}")
             self.put("status", f"save error: {e}")
 
 
