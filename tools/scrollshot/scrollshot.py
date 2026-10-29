@@ -81,7 +81,7 @@ def find_dy(prev, new):
     return 0, base
 
 
-def select_zone(root):
+def select_zone(root, min_h=100):
     import tkinter as tk
     root = tk.Toplevel(root)
     root.attributes("-fullscreen", True)
@@ -101,7 +101,7 @@ def select_zone(root):
     def rel(e):
         x, y = min(st["x0"], e.x_root), min(st["y0"], e.y_root)
         w, h = abs(e.x_root - st["x0"]), abs(e.y_root - st["y0"])
-        if w > 30 and h >= 100:
+        if w > 30 and h >= min_h:
             st["zone"] = (x, y, w, h)
         root.destroy()
     cv.bind("<ButtonRelease-1>", rel)
@@ -421,7 +421,7 @@ class Panel:
         if self.recording:
             self._st = "Finish recording first"; self._render()
             return
-        zone = select_zone(self.root)
+        zone = select_zone(self.root, min_h=20)
         if zone is None:
             return
         try:
