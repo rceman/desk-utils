@@ -193,8 +193,9 @@ class Panel:
         btns = tk.Frame(self.root, bg="#1e1e1e")
         btns.pack(pady=(4, 6), fill="x")
         r0 = tk.Frame(btns, bg="#1e1e1e"); r0.pack()
-        tk.Button(r0, text="Select Area", command=self.select_area, bg="#4a2d6a", fg="white",
-                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
+        self.btn_area = tk.Button(r0, text="Select Area", command=self.area_click, bg="#4a2d6a",
+                                  fg="white", font=("Consolas", 10), width=18)
+        self.btn_area.pack(side="left", padx=4, pady=2)
         self.btn_rec = tk.Button(r0, text="Start", command=self.toggle_rec, bg="#2d6a2d",
                                  fg="white", disabledforeground="#909090",
                                  font=("Consolas", 10), width=18, state="disabled")
@@ -231,6 +232,18 @@ class Panel:
     def put(self, kind, payload):
         self.q.put((kind, payload))
 
+    def area_click(self):
+        if self.zone:
+            self.zone = None
+            self.root.title("ScrollShot")
+            self.btn_rec.config(state="disabled")
+            self.btn_area.config(text="Select Area")
+            self.apply_border()
+            self._st = "Select Area to begin"; self._render()
+            log("zone cleared")
+        else:
+            self.select_area()
+
     def select_area(self):
         try:
             self._select_area()
@@ -249,6 +262,7 @@ class Panel:
             self.zone = None
             self.root.title("ScrollShot")
             self.btn_rec.config(state="disabled")
+            self.btn_area.config(text="Select Area")
             self.apply_border()
             self._st = "Select Area to begin"; self._render()
             log("zone cleared")
@@ -256,6 +270,7 @@ class Panel:
         self.zone = zone
         self.root.title(f"ScrollShot  {zone[2]}x{zone[3]}")
         self.btn_rec.config(state="normal")
+        self.btn_area.config(text="Cancel Area select")
         self.apply_border()
         self._st = "Press Start"; self._render()
         log(f"zone={zone}")
@@ -366,7 +381,7 @@ class Panel:
             w, h = img.size
             s = min(360 / w, 200 / h, 1.0)
             if s < 1.0:
-                img = img.resize((int(w * s), int(h * s)), Image.BILINEAR)
+                img = img.resize((max(1, int(w * s)), max(1, int(h * s))), Image.BILINEAR)
             if img.height > 200:
                 img = img.crop((0, img.height - 200, img.width, img.height))
             self.photo = ImageTk.PhotoImage(img)
@@ -442,6 +457,8 @@ class Panel:
                         canvas, anchor, cap_h = f, f, fh
                         self.put("preview", canvas)
                     else:
+                        if frames % 5 == 0:
+                            self.put("preview", f)
                         dy, score = find_dy(anchor, f)
                         if dy:
                             anchor = f
@@ -457,10 +474,7 @@ class Panel:
                                 chunks.append(f[st:].copy())
                                 cap_h += fh - st
                             pos = new_pos
-                            self.put("preview", canvas if not chunks else np.vstack([canvas, *chunks[-2:]]))
                             self.put("info", f"frames {frames} · scrolls {scrolls} · {cap_h}px")
-                    if frames % 5 == 0 and chunks:
-                        self.put("preview", np.vstack([canvas[-200:], *chunks[-2:]]))
                     left = IDLE_SEC - (time.monotonic() - last_new)
                     self.put("rec", f"auto-save in {max(0, int(left + 0.999))}s")
                     if left <= 0:
