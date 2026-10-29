@@ -65,7 +65,8 @@ def find_dy(prev, new):
     if not cands:
         return 0, base
     cands.sort()
-    for _, dy in cands[:5]:
+    best = cands[0][0]
+    for _, dy in [c for c in cands if c[0] <= best * 1.5 + 0.5][:12]:
         if dy > 0:
             a, b = ga[dy:], gb[:h - dy]
         else:
@@ -96,7 +97,7 @@ def select_zone(root):
     def rel(e):
         x, y = min(st["x0"], e.x_root), min(st["y0"], e.y_root)
         w, h = abs(e.x_root - st["x0"]), abs(e.y_root - st["y0"])
-        if w > 30 and h > 30:
+        if w > 30 and h >= 100:
             st["zone"] = (x, y, w, h)
         root.destroy()
     cv.bind("<ButtonRelease-1>", rel)
@@ -233,6 +234,9 @@ class Panel:
         self.q.put((kind, payload))
 
     def area_click(self):
+        if self.recording:
+            self._st = "Finish recording first"; self._render()
+            return
         if self.zone:
             self.zone = None
             self.root.title("ScrollShot")
@@ -315,6 +319,12 @@ class Panel:
         if not self.recording:
             if not self.zone:
                 return
+            self.root.update_idletasks()
+            if intersects(self.root.winfo_x(), self.root.winfo_y(),
+                          self.root.winfo_width(), self.root.winfo_height(), self.zone):
+                self._st = "Panel overlaps zone — move it or reselect"; self._render()
+                log("start refused: panel overlaps zone")
+                return
             self.stop_flag.clear()
             self.start_flag.set()
             self.recording = True
@@ -326,13 +336,17 @@ class Panel:
             self._st = "Stopping…"; self._render()
 
     def shot(self):
+        if self.recording:
+            self._st = "Finish recording first"; self._render()
+            return
         zone = select_zone(self.root)
         if zone is None:
             return
         try:
             img = grab(zone)
-            self.out_path = self._new_path()
-            Image.fromarray(img).save(self.out_path)
+            dest = self._new_path()
+            Image.fromarray(img).save(dest)
+            self.out_path = dest
             self.put("preview", img)
             self._st = "Screenshot saved"; self._render()
             self._inf = f"{img.shape[1]}x{img.shape[0]}"; self._render()
@@ -343,13 +357,9 @@ class Panel:
             self._st = f"shot error: {e}"; self._render()
 
     def _new_path(self):
-        base = f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}_{datetime.datetime.now().microsecond//1000:03d}"
-        path = os.path.join(self.folder, f"{base}.png")
-        n = 0
-        while os.path.exists(path):
-            n += 1
-            path = os.path.join(self.folder, f"{base}_{n}.png")
-        return path
+        import uuid
+        base = f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
+        return os.path.join(self.folder, f"{base}.png")
 
     def poll(self):
         try:
@@ -488,10 +498,10 @@ class Panel:
                 log(f"record error: {e}\n{traceback.format_exc()}")
                 self.put("status", f"error: {e}")
                 self.put("info", "failed — nothing saved")
-                self.put("rec", "")
-                self.put("btn", "start")
                 self.start_flag.clear()
                 self.stop_flag.clear()
+                self.put("rec", "")
+                self.put("btn", "start")
                 continue
             if self.cancel_flag.is_set():
                 log("cancelled")
@@ -553,6 +563,8 @@ def selftest():
                 canvas = np.vstack([canvas, f[st:]])
                 cap_h += h - st
             pos_d = new_pos
+        expected = h + 14 * step
+        assert canvas.shape[0] == expected, f"step {step}: canvas {canvas.shape[0]} != {expected}"
         ref = tall[:canvas.shape[0]]
         diff = float(np.abs(canvas.astype(np.int16) - ref.astype(np.int16)).mean())
         print(f"step={step:3d} canvas={canvas.shape[0]} diff={diff:.3f}")
