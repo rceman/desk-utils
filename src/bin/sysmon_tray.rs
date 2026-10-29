@@ -1030,6 +1030,20 @@ fn local_hhmm(epoch: i64) -> String {
     "--:--".into()
 }
 
+fn local_dmhm(epoch: i64) -> String {
+    unsafe {
+        let ft = FileTime {
+            lo: (((epoch + 11644473600) * 10_000_000) & 0xFFFF_FFFF) as u32,
+            hi: ((((epoch + 11644473600) as u128 * 10_000_000) >> 32) & 0xFFFF_FFFF) as u32,
+        };
+        let mut st = SystemTime { year: 0, month: 0, dow: 0, day: 0, hour: 0, minute: 0, second: 0, ms: 0 };
+        if FileTimeToSystemTime(&ft, &mut st) != 0 {
+            return format!("{:02}.{:02} {:02}:{:02}", st.day, st.month, st.hour, st.minute);
+        }
+    }
+    "--".into()
+}
+
 fn popup_lines() -> Vec<String> {
     use std::sync::atomic::Ordering::Relaxed;
     let (cu, cs) = (CPU_USER.load(Relaxed), CPU_SYS.load(Relaxed));
@@ -1083,7 +1097,7 @@ fn popup_lines() -> Vec<String> {
     v.push(match dnum("\"weekly_left\":") {
         Some(l) => {
             let r = dnum("\"resets_at\":").unwrap_or(0);
-            format!("Devin [main]: {}% weekly{}", l, if r > 0 { format!(" ({})", local_hhmm(r)) } else { String::new() })
+            format!("Devin [main]: {}% weekly{}", l, if r > 0 { format!(" ({})", local_dmhm(r)) } else { String::new() })
         }
         None => "Devin [main]: — weekly".to_string(),
     });
