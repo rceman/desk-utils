@@ -139,6 +139,12 @@ static GPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 static CPU_TEMP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static NVML_DEV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static W_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static CPU_USER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static CPU_SYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static RAM_USED_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static RAM_TOTAL_DG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static POPUP_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static POPUP_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static PDH_Q: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static PDH_C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -665,6 +671,8 @@ fn collect_metrics() {
         };
         if GlobalMemoryStatusEx(&mut m) != 0 {
             RAM_PCT.store(m.load, Relaxed);
+            RAM_TOTAL_DG.store((m.total_phys / 100_000_000) as u32, Relaxed);
+            RAM_USED_DG.store(((m.total_phys - m.avail_phys) / 100_000_000) as u32, Relaxed);
         }
         // CPU: delta of GetSystemTimes
         let (mut i, mut k, mut u) = (
@@ -681,6 +689,8 @@ fn collect_metrics() {
                 let total = dk + du;
                 if total > 0 {
                     CPU_PCT.store(((busy * 100) / total) as u32, Relaxed);
+                    CPU_USER.store(((du * 100) / total) as u32, Relaxed);
+                    CPU_SYS.store((((dk - di) * 100) / total) as u32, Relaxed);
                 }
             }
             *p = (ci, ck, cu);
@@ -821,6 +831,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
             EndPaint(hwnd, &ps);
             0
         }
+        WM_LBUTTONUP => { toggle_popup(); 0 }
         _ => DefWindowProcW(hwnd, msg, w, l),
     }
 }
@@ -960,6 +971,99 @@ fn open_settings(owner: HWND) {
         mk(130, 128, 90, 26, "Close", "BUTTON", 211, 0);
         ShowWindow(h, 5);
         CFG_HWND.store(h as usize, Relaxed);
+    }
+}
+
+fn popup_lines() -> Vec<String> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (cu, cs) = (CPU_USER.load(Relaxed), CPU_SYS.load(Relaxed));
+    let (ru, rt) = (RAM_USED_DG.load(Relaxed), RAM_TOTAL_DG.load(Relaxed));
+    let gb = |dg: u32| dg as f64 / 10.0;
+    let mut v = vec![
+        format!("CPU: {}%   (user {}%, sys {})", CPU_PCT.load(Relaxed), cu, cs),
+        format!("RAM: {:.1} / {:.1} GB used, {:.1} GB free", gb(ru), gb(rt), gb(rt.saturating_sub(ru))),
+    ];
+    for (lbl, path) in [("C:/", "C:\\"), ("W:/", "W:\\")] {
+        let (mut free, mut total, mut tf) = (0u64, 0u64, 0u64);
+        unsafe {
+            if GetDiskFreeSpaceExW(wide(path).as_ptr(), &mut free, &mut total, &mut tf) != 0 {
+                let g = |b: u64| b as f64 / 1e9;
+                v.push(format!("{}: {:.1} GB used, {:.1} GB free ({:.0}%)", lbl,
+                    g(total - free), g(free), free as f64 / total.max(1) as f64 * 100.0));
+            }
+        }
+    }
+    let (ct, gt, gp) = (CPU_TEMP.load(Relaxed), GPU_TEMP.load(Relaxed), GPU_PCT.load(Relaxed));
+    v.push(format!("CPU Temp: {}{}", if ct >= 0 { format!("{} °C", ct) } else { "—".into() },
+        if gp >= 0 { format!("   GPU: {}% {}", gp, if gt >= 0 { format!("{} °C", gt) } else { String::new() }) } else { String::new() }));
+    let c = CDX_PCT.load(Relaxed);
+    v.push(format!("Codex 5h: {}", if c >= 0 { format!("{}% left", 100 - c) } else { "—".into() }));
+    v
+}
+
+unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
+    match msg {
+        WM_PAINT => {
+            let mut ps = PaintStruct { hdc: null_mut(), erase: 0, rc: Rect { left: 0, top: 0, right: 0, bottom: 0 }, restore: 0, inc_update: 0, reserved: [0; 32] };
+            let dc = BeginPaint(hwnd, &mut ps);
+            let mut wr = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+            GetWindowRect(hwnd, &mut wr);
+            let (ww, wh) = (wr.right - wr.left, wr.bottom - wr.top);
+            let bg = CreateSolidBrush(0x0026_2626);
+            FillRect(dc, &Rect { left: 0, top: 0, right: ww, bottom: wh }, bg);
+            DeleteObject(bg);
+            let font = CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, wide("Consolas").as_ptr());
+            let old = SelectObject(dc, font);
+            SetBkMode(dc, 1);
+            SetTextColor(dc, 0x00E0_E0E0);
+            let lines = POPUP_LINES.lock().map(|v| v.clone()).unwrap_or_default();
+            for (i, ln) in lines.iter().enumerate() {
+                let mut r = Rect { left: 10, top: 8 + i as i32 * 22, right: ww - 8, bottom: 8 + (i as i32 + 1) * 22 };
+                DrawTextW(dc, wide(ln).as_ptr(), -1, &mut r, 0x20);
+            }
+            SelectObject(dc, old);
+            DeleteObject(font);
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_LBUTTONUP => { ShowWindow(hwnd, 0); 0 }
+        _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
+fn toggle_popup() {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        let mut ph = POPUP_HWND.load(Relaxed) as HWND;
+        if !ph.is_null() && ShowWindow(ph, 4 /*SW_SHOWNOACTIVATE*/) == 0 { }
+        if ph.is_null() {
+            let inst = GetModuleHandleW(std::ptr::null_mut());
+            let c = wide("sysmon_popup");
+            let wc = WndClassEx {
+                cb_size: std::mem::size_of::<WndClassEx>() as u32,
+                style: 0, wnd_proc: popup_proc as usize,
+                cls_extra: 0, wnd_extra: 0, inst,
+                icon: null_mut(), cursor: LoadCursorW(null_mut(), 32512),
+                hbr_background: 6 as HBRUSH, menu_name: std::ptr::null(),
+                class_name: c.as_ptr(), icon_sm: null_mut(),
+            };
+            RegisterClassExW(&wc);
+            ph = CreateWindowExW(0x8 /*TOPMOST*/, c.as_ptr(), wide("sysmon info").as_ptr(), 0x8000_0000 /*POPUP*/,
+                0, 0, 10, 10, null_mut(), null_mut(), inst, null_mut());
+            POPUP_HWND.store(ph as usize, Relaxed);
+        }
+        let lines = popup_lines();
+        if let Ok(mut g) = POPUP_LINES.lock() { *g = lines.clone(); }
+        let hgt = 8 * 2 + lines.len() as i32 * 22 + 4;
+        let wd = 330;
+        // position above the widget
+        if let (Some((wx, wy, _, _)), wh) = (widget_rect(), WIDGET_HWND.load(Relaxed) as HWND) {
+            let _ = wh;
+            SetWindowPos(ph, -1, wx, wy - hgt - 6, wd, hgt, 0x10 | 0x40);
+        } else {
+            SetWindowPos(ph, -1, 100, 100, wd, hgt, 0x10 | 0x40);
+        }
+        InvalidateRect(ph, std::ptr::null(), 1);
     }
 }
 
