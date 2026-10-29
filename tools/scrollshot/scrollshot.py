@@ -76,9 +76,9 @@ def find_dy(prev, new):
     return 0, base
 
 
-def select_zone():
+def select_zone(root):
     import tkinter as tk
-    root = tk.Tk()
+    root = tk.Toplevel(root)
     root.attributes("-fullscreen", True)
     root.attributes("-alpha", 0.25)
     root.attributes("-topmost", True)
@@ -101,7 +101,7 @@ def select_zone():
         root.destroy()
     cv.bind("<ButtonRelease-1>", rel)
     root.bind("<Escape>", lambda e: root.destroy())
-    root.mainloop()
+    root.wait_window()
     return st.get("zone")
 
 
@@ -195,28 +195,26 @@ class Panel:
         btns.pack(pady=(4, 6), fill="x")
         r0 = tk.Frame(btns, bg="#1e1e1e"); r0.pack()
         tk.Button(r0, text="Select Area", command=self.select_area, bg="#4a2d6a", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         self.btn_rec = tk.Button(r0, text="Start", command=self.toggle_rec, bg="#2d6a2d",
                                  fg="white", disabledforeground="#909090",
-                                 font=("Consolas", 10), width=14, state="disabled")
+                                 font=("Consolas", 10), width=18, state="disabled")
         self.btn_rec.pack(side="left", padx=4, pady=2)
         r1 = tk.Frame(btns, bg="#1e1e1e"); r1.pack()
         tk.Button(r1, text="Take screenshot", command=self.shot, bg="#2d5a6a", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
+        tk.Button(r1, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
+                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
 
 
         r3 = tk.Frame(btns, bg="#1e1e1e"); r3.pack()
         tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         tk.Button(r3, text="Copy path", command=self.copy_path, bg="#3d3d3d", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
-        foot = tk.Frame(self.root, bg="#1e1e1e")
-        foot.pack(fill="x", padx=10, pady=(4, 14))
+                  font=("Consolas", 10), width=18).pack(side="left", padx=4, pady=2)
         short = self.folder.replace(os.path.expanduser("~"), "~")
-        tk.Label(foot, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
-                 font=("Consolas", 8), anchor="w").pack(side="left", fill="x", expand=True)
-        tk.Button(foot, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
-                  font=("Consolas", 9), width=11).pack(side="right")
+        tk.Label(self.root, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
+                 font=("Consolas", 8), anchor="w").pack(fill="x", padx=10, pady=(4, 14))
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -226,7 +224,15 @@ class Panel:
         self.q.put((kind, payload))
 
     def select_area(self):
-        zone = select_zone()
+        try:
+            self._select_area()
+        except Exception:
+            import traceback
+            log(f"select_area error:\n{traceback.format_exc()}")
+            self.status.set("select failed — see log")
+
+    def _select_area(self):
+        zone = select_zone(self.root)
         if zone is None:
             return
         self.zone = zone
