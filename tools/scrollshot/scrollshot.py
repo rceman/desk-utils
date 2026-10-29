@@ -132,118 +132,239 @@ def set_dark_title(root, dark):
 
 
 class Border:
+    """Windows overlay; zone and handle dimensions are physical pixels."""
+
     T = 6
+    C = 14
+    G = 24
+    GAP = 4
+    MIN_W = 30
+    MIN_H = 100
+    GREEN = "#00ff88"
+    INK = "#0d3320"
+    KEY = "#010203"
+    MODES = ("n", "s", "w", "e", "nw", "ne", "sw", "se", "move")
+    HIT_ORDER = ("nw", "ne", "sw", "se", "move", "n", "s", "w", "e")
 
     def __init__(self, tk, zone, on_change=None):
-        self.zone = list(zone)
+        x, y, w, h = map(int, zone)
+        if w < self.MIN_W or h < self.MIN_H:
+            raise ValueError("Border needs a zone at least 30 x 100 pixels")
+        self.tk = tk
+        self.zone = [x, y, w, h]
         self.on_change = on_change or (lambda z: None)
-        self.wins = []
-        for edge, cur in [("top", "sb_v_double_arrow"), ("bottom", "sb_v_double_arrow"),
-                          ("left", "sb_h_double_arrow"), ("right", "sb_h_double_arrow")]:
-            win = tk.Toplevel()
-            win.overrideredirect(True)
-            win.attributes("-topmost", True)
-            win.configure(bg="#00ff88", cursor=cur)
-            win.bind("<B1-Motion>", lambda e, ed=edge: self._move(ed, e.x_root, e.y_root))
-            self.wins.append(win)
-        self.corners = []
-        for corner, cur in [("nw", "sizing nwse"), ("ne", "sizing nesw"),
-                            ("sw", "sizing nesw"), ("se", "sizing nwse")]:
-            win = tk.Toplevel()
-            win.overrideredirect(True)
-            win.attributes("-topmost", True)
-            win.configure(bg="#00ff88", cursor=cur)
-            win.bind("<B1-Motion>", lambda e, c=corner: self._corner(c, e.x_root, e.y_root))
-            self.corners.append(win)
-        self.grip = tk.Toplevel()
-        self.grip.overrideredirect(True)
-        self.grip.attributes("-topmost", True)
-        self.grip.configure(bg="#00ff88", bd=0, highlightthickness=0)
-        img = Image.new("RGB", (96, 96), "#00ff88")
-        d = ImageDraw.Draw(img)
-        c = "#0d3320"
-        # move icon at 3x, downscaled for AA
-        for x0, y0, x1, y1 in [(48, 8, 48, 88), (8, 48, 88, 48)]:
-            d.line((x0, y0, x1, y1), fill=c, width=8)
-        for pts in [[(48, 4), (38, 18), (58, 18)], [(48, 92), (38, 78), (58, 78)],
-                    [(4, 48), (18, 38), (18, 58)], [(92, 48), (78, 38), (78, 58)]]:
-            d.polygon(pts, fill=c)
-        img = img.resize((20, 20), Image.LANCZOS)
-        self._grip_photo = ImageTk.PhotoImage(img)
-        lb = tk.Label(self.grip, image=self._grip_photo, bd=0, bg="#00ff88", cursor="fleur")
-        lb.pack()
-        lb.bind("<ButtonPress-1>", self._gstart)
-        lb.bind("<B1-Motion>", self._gmove)
-        self.grip.bind("<ButtonPress-1>", self._gstart)
-        self.grip.bind("<B1-Motion>", self._gmove)
-        self._g = None
+        self._closed = False
+        self._drag = None
+        self._cursor = None
+
+        self.win = tk.Toplevel()
+        self.win.withdraw()  # Configure and draw before showing any pixels.
+        if self.win.tk.call("tk", "windowingsystem") != "win32":
+            self.win.destroy()
+            raise RuntimeError("This Border uses Windows color-key transparency")
+        self.win.overrideredirect(True)
+        self.win.configure(bg=self.KEY, bd=0, highlightthickness=0)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-toolwindow", True)
+        self.win.attributes("-transparentcolor", self.KEY)
+        # Keep the window opaque; only KEY pixels are transparent.
+        # Do not set WS_EX_TRANSPARENT: it would disable all handle input.
+
+        self._vx = self.win.winfo_vrootx()
+        self._vy = self.win.winfo_vrooty()
+        vw = self.win.winfo_vrootwidth()
+        vh = self.win.winfo_vrootheight()
+        self.win.maxsize(vw, vh)
+        # Tk/Windows accepts '+-1920' as an absolute negative coordinate.
+        # Formatting a negative coordinate as '-1920' anchors from the right.
+        self.win.geometry(f"{vw}x{vh}+{self._vx}+{self._vy}")
+        self.canvas = tk.Canvas(
+            self.win, bg=self.KEY, bd=0, highlightthickness=0,
+            relief="flat", takefocus=0,
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self._cursors = {
+            "n": "sb_v_double_arrow", "s": "sb_v_double_arrow",
+            "w": "sb_h_double_arrow", "e": "sb_h_double_arrow",
+            "nw": "size_nw_se", "se": "size_nw_se",
+            "ne": "size_ne_sw", "sw": "size_ne_sw", "move": "fleur",
+        }
+        self._items = {}
+        for mode in self.MODES:
+            tags = ("handle", "corner") if mode in self.HIT_ORDER[:4] else ("handle",)
+            self._items[mode] = self.canvas.create_rectangle(
+                0, 0, 0, 0, fill=self.GREEN, outline="", width=0, tags=tags,
+            )
+        self._dots = [
+            self.canvas.create_rectangle(
+                0, 0, 0, 0, fill=self.INK, outline="", width=0, tags=("dots",),
+            ) for _ in range(6)
+        ]
+        # Bind exactly once, on the canvas, not on both child and Toplevel.
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<Motion>", self._hover)
+        self.canvas.bind("<Leave>", self._leave)
         self.layout()
+        self.win.deiconify()
+        self.win.update_idletasks()
+        self._suppress_native_frame()
+
+    def _suppress_native_frame(self):
+        """Apply frame policy to Tk's native wrapper, not its child HWND."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        dwm.DwmSetWindowAttribute.argtypes = [
+            wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+        ]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        hwnd = user32.GetAncestor(self.win.winfo_id(), 2)  # GA_ROOT
+        self._frame_results = []
+        # Non-client rendering off; square corners; no Windows 11 border.
+        # Attributes 33/34 may return E_INVALIDARG on older Windows versions.
+        for attr, value in ((2, 1), (33, 1), (34, 0xFFFFFFFE)):
+            data = wintypes.DWORD(value)
+            hr = dwm.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(data), ctypes.sizeof(data),
+            )
+            self._frame_results.append((attr, hr))
+
+    @classmethod
+    def _rectangles(cls, zone):
+        """Absolute, half-open rectangles; none intersects the capture zone."""
+        x, y, w, h = zone
+        r, b = x + w, y + h
+        t, c, g = cls.T, cls.C, cls.G
+        gx = x + (w - g) // 2
+        gy = y - t - cls.GAP - g
+        return {
+            "n": (x - t, y - t, r + t, y),
+            "s": (x - t, b, r + t, b + t),
+            "w": (x - t, y, x, b),
+            "e": (r, y, r + t, b),
+            "nw": (x - c, y - c, x, y),
+            "ne": (r, y - c, r + c, y),
+            "sw": (x - c, b, x, b + c),
+            "se": (r, b, r + c, b + c),
+            "move": (gx, gy, gx + g, gy + g),
+        }
+
+    def _coords(self, item, rect):
+        l, t, r, b = rect
+        self.canvas.coords(item, l - self._vx, t - self._vy,
+                           r - self._vx, b - self._vy)
 
     def layout(self):
-        x, y, w, h = self.zone
-        t = self.T
-        geoms = [(x - t, y - t, w + 2 * t, t), (x - t, y + h, w + 2 * t, t),
-                 (x - t, y, t, h), (x + w, y, t, h)]
-        for win, (bx, by, bw, bh) in zip(self.wins, geoms):
-            win.geometry(f"{bw}x{bh}+{bx}+{by}")
-        for win, (bx, by) in zip(self.corners, [(x - t, y - t), (x + w, y - t),
-                                                (x - t, y + h), (x + w, y + h)]):
-            win.geometry(f"14x14+{bx - 4}+{by - 4}")
-            win.lift()
-        self.grip.geometry(f"22x22+{x + w // 2 - 11}+{y - t - 26}")
+        if self._closed:
+            return
+        self._rects = self._rectangles(self.zone)
+        # Every handle is updated from the SAME zone on EVERY layout pass.
+        for mode, rect in self._rects.items():
+            self._coords(self._items[mode], rect)
+        gx, gy, _, _ = self._rects["move"]
+        # Six crisp 2px squares; no font, raster scaling, padding or alpha.
+        for item, (col, row) in zip(
+            self._dots, ((c, r) for r in range(3) for c in range(2))
+        ):
+            px, py = gx + 8 + 6 * col, gy + 5 + 6 * row
+            self._coords(item, (px, py, px + 2, py + 2))
+        self.canvas.tag_raise("corner")
+        self.canvas.tag_raise(self._items["move"])
+        self.canvas.tag_raise("dots")
 
-    def _move(self, edge, rx, ry):
-        x, y, w, h = self.zone
-        if edge == "top":
-            ny = min(ry, y + h - 100)
-            h += y - ny
-            y = ny
-        elif edge == "bottom":
-            h = max(100, ry - y)
-        elif edge == "left":
-            nx = min(rx, x + w - 30)
-            w += x - nx
-            x = nx
-        elif edge == "right":
-            w = max(30, rx - x)
-        self.zone = [x, y, w, h]
-        self.layout()
-        self.on_change(tuple(self.zone))
+    def _hit(self, rx, ry):
+        # Corner precedence is explicit, independent of Canvas item order.
+        for mode in self.HIT_ORDER:
+            l, t, r, b = self._rects[mode]
+            if l <= rx < r and t <= ry < b:
+                return mode
+        return None
 
-    def _corner(self, corner, rx, ry):
-        x, y, w, h = self.zone
-        if corner == "nw":
-            nx = min(rx, x + w - 30)
-            ny = min(ry, y + h - 100)
-            w += x - nx; h += y - ny; x, y = nx, ny
-        elif corner == "ne":
-            w = max(30, rx - x)
-            ny = min(ry, y + h - 100); h += y - ny; y = ny
-        elif corner == "sw":
-            nx = min(rx, x + w - 30); w += x - nx; x = nx
-            h = max(100, ry - y)
-        else:
-            w = max(30, rx - x)
-            h = max(100, ry - y)
-        self.zone = [x, y, w, h]
-        self.layout()
-        self.on_change(tuple(self.zone))
+    def _set_cursor(self, mode):
+        cursor = self._cursors.get(mode, "")
+        if cursor != self._cursor:
+            self.canvas.configure(cursor=cursor)
+            self._cursor = cursor
 
-    def _gstart(self, e):
-        self._g = (e.x_root, e.y_root, *self.zone)
+    def _hover(self, e):
+        if not self._closed and self._drag is None:
+            self._set_cursor(self._hit(e.x_root, e.y_root))
 
-    def _gmove(self, e):
-        gx, gy, zx, zy, zw, zh = self._g
-        self.zone = [zx + e.x_root - gx, zy + e.y_root - gy, zw, zh]
-        self.layout()
-        self.on_change(tuple(self.zone))
+    def _leave(self, e):
+        if not self._closed and self._drag is None:
+            self._set_cursor(None)
+
+    def _press(self, e):
+        if self._closed:
+            return "break"
+        mode = self._hit(e.x_root, e.y_root)
+        if mode is not None:
+            self._drag = (mode, e.x_root, e.y_root, tuple(self.zone))
+            self._set_cursor(mode)
+            self.canvas.grab_set()
+        return "break"
+
+    @classmethod
+    def _dragged_zone(cls, start, mode, dx, dy):
+        x, y, w, h = start
+        if mode == "move":
+            return [x + dx, y + dy, w, h]
+        l, t, r, b = x, y, x + w, y + h
+        if "w" in mode:
+            l = min(x + dx, r - cls.MIN_W)
+        if "e" in mode:
+            r = max(x + w + dx, l + cls.MIN_W)
+        if "n" in mode:
+            t = min(y + dy, b - cls.MIN_H)
+        if "s" in mode:
+            b = max(y + h + dy, t + cls.MIN_H)
+        return [l, t, r - l, b - t]
+
+    def _motion(self, e):
+        if self._closed or self._drag is None:
+            return "break"
+        mode, px, py, start = self._drag
+        zone = self._dragged_zone(start, mode, e.x_root - px, e.y_root - py)
+        if zone != self.zone:
+            self.zone = zone
+            self.layout()
+            self.on_change(tuple(zone))
+        return "break"
+
+    def _ungrab(self):
+        try:
+            if self.canvas.grab_current() is self.canvas:
+                self.canvas.grab_release()
+        except self.tk.TclError:
+            pass  # The owner may already have destroyed the Tk hierarchy.
+
+    def _release(self, e):
+        if self._closed:
+            return "break"
+        try:
+            self._motion(e)  # Include the final pointer position.
+        finally:
+            self._drag = None
+            self._ungrab()
+        if not self._closed:
+            self._set_cursor(self._hit(e.x_root, e.y_root))
+        return "break"
 
     def close(self):
-        for w in self.wins + self.corners + [self.grip]:
-            try:
-                w.destroy()
-            except Exception:
-                pass
+        if self._closed:
+            return
+        self._closed = True
+        self._drag = None
+        self._ungrab()
+        try:
+            self.win.destroy()
+        except self.tk.TclError:
+            pass
 
 
 class Panel:
