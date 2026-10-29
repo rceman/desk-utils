@@ -294,7 +294,7 @@ class Panel:
         self.root.update_idletasks()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         pw, ph = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
-        self.root.geometry(f"+{max(0, sw - pw)}+{max(0, sh - ph - 150)}")
+        self.root.geometry(f"+{max(0, sw - pw - 5)}+{max(0, sh - ph - 150)}")
         self.root.bind("<Escape>", lambda e: self.toggle_rec() if self.recording else None)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
