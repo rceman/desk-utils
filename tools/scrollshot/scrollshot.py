@@ -171,12 +171,12 @@ class Panel:
         self.status = tk.StringVar(value="Select Area to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
                  font=("Consolas", 9), justify="center", wraplength=360, height=1,
-                 anchor="center").pack(padx=10, pady=(10, 0), fill="x")
+                 anchor="center").pack(padx=10, pady=(6, 0), fill="x")
         self.info = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
-                 font=("Consolas", 8), height=1, anchor="center", justify="center").pack(padx=10, fill="x")
+                 font=("Consolas", 8), height=0, anchor="center", justify="center").pack(padx=10, fill="x")
         self.view = tk.Canvas(self.root, bg="#111111", width=360, height=200, highlightthickness=0)
-        self.view.pack(padx=10, pady=6)
+        self.view.pack(padx=10, pady=(2, 4))
         global LOG_PATH
         self.folder = out_dir
         os.makedirs(self.folder, exist_ok=True)
