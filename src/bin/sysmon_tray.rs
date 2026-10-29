@@ -1071,7 +1071,21 @@ fn popup_lines() -> Vec<String> {
         if cr > 0 { format!("{}% 5h ({})", 100 - c, local_hhmm(cr)) } else { format!("{}% 5h", 100 - c) }
     } else { "— 5h".into() },
         if sec >= 0 { format!(" {}% weekly", 100 - sec) } else { String::new() }));
-    v.push("Devin [main]: — weekly".to_string());
+    let dv = std::env::var("USERPROFILE").ok()
+        .and_then(|h| std::fs::read_to_string(format!("{h}\\.devin_usage.json")).ok())
+        .unwrap_or_default();
+    let dnum = |k: &str| -> Option<i64> {
+        let i = dv.find(k)? + k.len();
+        let v: String = dv[i..].chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+        v.parse::<f64>().ok().map(|f| f as i64)
+    };
+    v.push(match dnum("\"weekly_left\":") {
+        Some(l) => {
+            let r = dnum("\"resets_at\":").unwrap_or(0);
+            format!("Devin [main]: {}% weekly{}", l, if r > 0 { format!(" ({})", local_hhmm(r)) } else { String::new() })
+        }
+        None => "Devin [main]: — weekly".to_string(),
+    });
     v
 }
 
