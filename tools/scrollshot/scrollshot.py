@@ -155,10 +155,11 @@ class Panel:
         self.root.resizable(False, False)
         self.status = tk.StringVar(value="Press Start to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
-                 font=("Consolas", 10), justify="left", wraplength=340).pack(padx=10, pady=(10, 4), anchor="w")
+                 font=("Consolas", 10), justify="left", wraplength=340, height=2,
+                 anchor="nw").pack(padx=10, pady=(10, 4), anchor="w", fill="x")
         self.info = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.info, bg="#1e1e1e", fg="#8fbf8f",
-                 font=("Consolas", 9)).pack(padx=10, anchor="w")
+                 font=("Consolas", 9), height=1, anchor="w").pack(padx=10, anchor="w", fill="x")
         self.view = tk.Canvas(self.root, bg="#111111", width=330, height=250, highlightthickness=0)
         self.view.pack(padx=10, pady=8)
         global LOG_PATH
@@ -190,7 +191,7 @@ class Panel:
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
         self.border = Border(tk, zone)
-        log(f"panel {self.root.geometry()} zone={zone}")
+        log(f"panel {self._place(zone)} zone={zone}")
 
     @staticmethod
     def _place(zone):
