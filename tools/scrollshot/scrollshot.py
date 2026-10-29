@@ -141,8 +141,7 @@ class Panel:
         self.folder = out_dir
         os.makedirs(self.folder, exist_ok=True)
         LOG_PATH = os.path.join(self.folder, "scrollshot.log")
-        tk.Label(self.root, text=f"Save to: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
-                 font=("Consolas", 8), wraplength=360, justify="left").pack(padx=10, anchor="w")
+
         self.border_var = tk.BooleanVar(value=True)
         tk.Checkbutton(self.root, text="Record Area Border", variable=self.border_var,
                        command=self.apply_border, bg="#1e1e1e", fg="#d0d0d0",
@@ -160,16 +159,19 @@ class Panel:
         self.btn_rec = tk.Button(r1, text="Start", command=self.toggle_rec, bg="#2d6a2d",
                                  fg="white", font=("Consolas", 10), width=14, state="disabled")
         self.btn_rec.pack(side="left", padx=4, pady=2)
-        tk.Button(r1, text="Cancel", command=self.cancel, bg="#6a2d2d", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
-        r2 = tk.Frame(btns, bg="#1e1e1e"); r2.pack()
-        tk.Button(r2, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
-                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+
+
         r3 = tk.Frame(btns, bg="#1e1e1e"); r3.pack()
         tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         tk.Button(r3, text="Copy path", command=self.copy_path, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        foot = tk.Frame(self.root, bg="#1e1e1e")
+        foot.pack(fill="x", padx=10, pady=(2, 8))
+        tk.Label(foot, text=f"Folder: {self.folder}", bg="#1e1e1e", fg="#7aa2c8",
+                 font=("Consolas", 8), anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Button(foot, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
+                  font=("Consolas", 9), width=11).pack(side="right")
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
