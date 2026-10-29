@@ -149,12 +149,16 @@ class Border:
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
-        self.grip.configure(cursor="fleur")
-        lb = tk.Label(self.grip, text="✥", bg="#00ff88", fg="#1a1a1a",
-                      font=("Segoe UI Symbol", 14, "bold"), cursor="fleur")
-        lb.pack(fill="both", expand=True)
-        lb.bind("<ButtonPress-1>", self._gstart)
-        lb.bind("<B1-Motion>", self._gmove)
+        cv = tk.Canvas(self.grip, width=26, height=26, bg="#00ff88", highlightthickness=0,
+                       cursor="fleur")
+        cv.pack()
+        cv.bind("<ButtonPress-1>", self._gstart)
+        cv.bind("<B1-Motion>", self._gmove)
+        c = "#0d3320"
+        # 4 outward arrows + center dot, spanning the whole 26px square
+        for x0, y0, x1, y1 in [(13, 7, 13, 2), (13, 19, 13, 24), (7, 13, 2, 13), (19, 13, 24, 13)]:
+            cv.create_line(x0, y0, x1, y1, fill=c, width=2, arrow="last", arrowshape=(5, 6, 3))
+        cv.create_oval(10, 10, 16, 16, fill=c, outline="")
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
