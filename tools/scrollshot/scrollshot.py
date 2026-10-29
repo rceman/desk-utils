@@ -257,13 +257,21 @@ class Panel:
         q = queue.Queue()
 
         def on_scroll(x, y, dx, dy):
+            log(f"wheel event at {x},{y} d={dx},{dy}")
             q.put(1)
 
-        listener = mouse.Listener(on_scroll=on_scroll)
-        listener.start()
+        try:
+            listener = mouse.Listener(on_scroll=on_scroll)
+            listener.start()
+            log("mouse listener started")
+        except Exception as e:
+            log(f"listener failed: {e}")
+            self.events.put(("status", f"listener failed: {e}"))
+            return
         try:
             self.frames.append((time.time(), grab(self.zone)))
             log(f"first frame {self.frames[-1][1].shape}")
+            self.events.put(("status", "Ready — scroll inside the zone"))
             self.events.put(("preview", self.frames[-1]))
             self.events.put(("info", f"frames: {len(self.frames)}  zone {self.zone[2]}x{self.zone[3]}"))
             idle = 0
