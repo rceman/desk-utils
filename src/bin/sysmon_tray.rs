@@ -513,17 +513,19 @@ fn init_nvml() {
             }
             type Init = unsafe extern "system" fn() -> u32;
             type ByIdx = unsafe extern "system" fn(u32, *mut *mut c_void) -> u32;
-            let init: Init = std::mem::transmute(GetProcAddress(m, b"nvmlInit_v2\0".as_ptr()));
-            let byidx: ByIdx = std::mem::transmute(GetProcAddress(m, b"nvmlDeviceGetHandleByIndex_v2\0".as_ptr()));
-            let temp: NvmlTemp = std::mem::transmute(GetProcAddress(m, b"nvmlDeviceGetTemperature\0".as_ptr()));
-            let i = init as usize;
-            let b = byidx as usize;
-            let t = temp as usize;
-            if i != 0 && b != 0 && t != 0 && init() == 0 {
-                let mut dev: *mut c_void = null_mut();
-                if byidx(0, &mut dev) == 0 {
-                    NVML_DEV.store(dev as usize, Relaxed);
-                    NVML_TEMP_FN.store(t, Relaxed);
+            let i = GetProcAddress(m, b"nvmlInit_v2\0".as_ptr());
+            let b = GetProcAddress(m, b"nvmlDeviceGetHandleByIndex_v2\0".as_ptr());
+            let t = GetProcAddress(m, b"nvmlDeviceGetTemperature\0".as_ptr());
+            if !i.is_null() && !b.is_null() && !t.is_null() {
+                let init: Init = std::mem::transmute(i);
+                let byidx: ByIdx = std::mem::transmute(b);
+                let temp: NvmlTemp = std::mem::transmute(t);
+                if init() == 0 {
+                    let mut dev: *mut c_void = null_mut();
+                    if byidx(0, &mut dev) == 0 {
+                        NVML_DEV.store(dev as usize, Relaxed);
+                        NVML_TEMP_FN.store(t as usize, Relaxed);
+                    }
                 }
             }
             return;
@@ -627,7 +629,7 @@ fn cpu_temp() -> Option<i32> {
             return None;
         }
         let mut hottest: Option<i32> = None;
-        let cores = 8usize;
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8).min(64);
         let th = GetCurrentThread();
         for c in 0..cores {
             let previous = SetThreadAffinityMask(th, 1usize << c);
