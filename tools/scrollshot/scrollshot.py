@@ -149,16 +149,16 @@ class Border:
         self.grip = tk.Toplevel()
         self.grip.overrideredirect(True)
         self.grip.attributes("-topmost", True)
-        cv = tk.Canvas(self.grip, width=26, height=26, bg="#00ff88", highlightthickness=0,
+        cv = tk.Canvas(self.grip, width=30, height=30, bg="#00ff88", highlightthickness=0,
                        cursor="fleur")
         cv.pack()
         cv.bind("<ButtonPress-1>", self._gstart)
         cv.bind("<B1-Motion>", self._gmove)
         c = "#0d3320"
-        # 4 outward arrows + center dot, spanning the whole 26px square
-        for x0, y0, x1, y1 in [(13, 7, 13, 2), (13, 19, 13, 24), (7, 13, 2, 13), (19, 13, 24, 13)]:
-            cv.create_line(x0, y0, x1, y1, fill=c, width=2, arrow="last", arrowshape=(5, 6, 3))
-        cv.create_oval(10, 10, 16, 16, fill=c, outline="")
+        cv.create_polygon([(15, 3), (10, 9), (20, 9)], fill=c, outline="")
+        cv.create_polygon([(15, 27), (10, 21), (20, 21)], fill=c, outline="")
+        cv.create_polygon([(3, 15), (9, 10), (9, 20)], fill=c, outline="")
+        cv.create_polygon([(27, 15), (21, 10), (21, 20)], fill=c, outline="")
         self.grip.bind("<ButtonPress-1>", self._gstart)
         self.grip.bind("<B1-Motion>", self._gmove)
         self._g = None
@@ -171,7 +171,7 @@ class Border:
                  (x - t, y, t, h), (x + w, y, t, h)]
         for win, (bx, by, bw, bh) in zip(self.wins, geoms):
             win.geometry(f"{bw}x{bh}+{bx}+{by}")
-        self.grip.geometry(f"26x26+{x + w + t - 5}+{y - t - 19}")
+        self.grip.geometry(f"30x30+{x + w + t - 5}+{y - t - 21}")
 
     def _move(self, edge, rx, ry):
         x, y, w, h = self.zone
