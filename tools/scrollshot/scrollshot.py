@@ -33,88 +33,70 @@ def grab(zone):
     return np.array(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
 
 
-def sig2(img, cols=64):
-    g = img.mean(axis=2)
-    h, w = g.shape
-    cols = max(4, min(cols, w))
-    step = max(1, w // cols)
-    usable = cols * step
-    return g[:, :usable].reshape(h, cols, step).mean(axis=2)
+def row_hashes(img):
+    """Exact per-row pixel hashes (fast, 1px-accurate row identity)."""
+    import hashlib
+    return [hashlib.blake2b(np.ascontiguousarray(r).tobytes(), digest_size=8).digest()
+            for r in img]
 
 
-def full_score(prev_img, new_img, s, rows_step=4):
-    h = prev_img.shape[0]
-    a = prev_img[s:h:rows_step].astype(np.int16)
-    b = new_img[:h - s:rows_step].astype(np.int16)
-    n = min(len(a), len(b))
-    if n == 0:
-        return None
-    return float(np.abs(a[:n] - b[:n]).mean())
+def rows_equal(a, b, tol=1.0):
+    return float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()) <= tol
 
 
-def find_shift(prev_sig, new_sig, verify=None):
-    h = len(prev_sig)
-    lo = int(h * MIN_OVERLAP)
-    best_s, best_score = 0, float("inf")
-    for s in range(1, h - lo + 1):
-        a = prev_sig[s:]
-        b = new_sig[:len(a)]
-        score = float(np.abs(a - b).mean())
-        if score < best_score:
-            best_score, best_s = score, s
-    if verify is not None and best_s > 0:
-        full = verify(best_s)
-        if full is not None:
-            return best_s, full
-    return best_s, best_score
+def find_overlap(canvas_img, new_img, min_rows=40, tol=1.0):
+    """Largest block where canvas[i:i+k] == new[j:j+k] (pixel-wise).
 
-
-def best_shift(prev_img, new_img):
-    s, score = find_shift(sig2(prev_img), sig2(new_img),
-                          verify=lambda s: full_score(prev_img, new_img, s))
-    return s, score
-
-
-def full_diff(a, b):
-    n = min(a.shape[0], b.shape[0])
-    return float(np.abs(a[:n].astype(np.int16) - b[:n].astype(np.int16)).mean())
-
-
-def contains(canvas_img, new_img):
+    Returns (shift, k): shift = i - j (positive when new content scrolled down).
+    """
     ch, nh = canvas_img.shape[0], new_img.shape[0]
-    if nh >= ch:
-        return False
-    lo = max(0, ch - nh - 200)
-    ns = sig2(new_img)
-    cs = sig2(canvas_img[lo:])
-    best_score = float("inf")
-    for off in range(0, len(cs) - len(ns) + 1):
-        d = float(np.abs(cs[off:off + len(ns)] - ns).mean())
-        if d < best_score:
-            best_score = d
-    return best_score < MSE_LIMIT
+    if ch == 0 or nh == 0:
+        return 0, 0
+    ch_h = row_hashes(canvas_img)
+    nh_h = row_hashes(new_img)
+    idx = {}
+    for i, h in enumerate(ch_h):
+        idx.setdefault(h, []).append(i)
+    best_shift, best_k = 0, 0
+    for j, h in enumerate(nh_h[:min(nh, ch)]):
+        for i in idx.get(h, ()):
+            k = 0
+            while i + k < ch and j + k < nh and ch_h[i + k] == nh_h[j + k]:
+                k += 1
+            # tolerate anti-aliasing: verify/extend with pixel tolerance
+            if k >= min_rows and k > best_k:
+                best_shift, best_k = i - j, k
+    if best_k == 0:
+        # fallback: tolerance-based scan on a coarse grid
+        for shift in range(-(nh - min_rows), ch - min_rows):
+            i0 = max(0, shift)
+            j0 = max(0, -shift)
+            k = 0
+            while (i0 + k < ch and j0 + k < nh and k < 4000
+                   and rows_equal(canvas_img[i0 + k], new_img[j0 + k], tol)):
+                k += 1
+            if k >= min_rows and k > best_k:
+                best_shift, best_k = shift, k
+    return best_shift, best_k
 
 
-def stitch(frames):
-    base = frames[0]
-    parts = [base]
-    total = base.shape[0]
-    canvas_so_far = base
+def stitch(timed_frames, min_rows=40):
+    """Stitch frames in capture-time order; drop content already present."""
+    frames = [f for _, f in sorted(timed_frames, key=lambda t: t[0])]
+    canvas = frames[0]
     for i in range(1, len(frames)):
-        s, _ = best_shift(frames[i - 1], frames[i])
-        if s <= 0:
-            continue
-        part = frames[i][base.shape[0] - s:]
-        if part.shape[0] == 0 or contains(canvas_so_far, frames[i]):
-            continue
-        parts.append(part)
-        total += s
-        canvas_so_far = frames[i]
-    canvas = np.zeros((total, base.shape[1], 3), dtype=np.uint8)
-    y = 0
-    for p in parts:
-        canvas[y:y + p.shape[0]] = p
-        y += p.shape[0]
+        shift, k = find_overlap(canvas, frames[i], min_rows)
+        if k >= min_rows:
+            new_rows = frames[i][k:] if shift >= 0 else frames[i][:frames[i].shape[0] - k]
+            if new_rows.shape[0] == 0:
+                log(f"frame {i}: fully covered (k={k}) -> drop")
+                continue
+            log(f"frame {i}: overlap k={k} shift={shift} -> append {new_rows.shape[0]} rows")
+            canvas = np.vstack([canvas, new_rows]) if shift >= 0 else np.vstack([new_rows, canvas])
+        else:
+            # no overlap: keep whole frame (content changed non-linearly)
+            log(f"frame {i}: no overlap -> append full frame {frames[i].shape[0]} rows")
+            canvas = np.vstack([canvas, frames[i]])
     return canvas
 
 
@@ -280,8 +262,8 @@ class Panel:
         listener = mouse.Listener(on_scroll=on_scroll)
         listener.start()
         try:
-            self.frames.append(grab(self.zone))
-            log(f"first frame {self.frames[-1].shape}")
+            self.frames.append((time.time(), grab(self.zone)))
+            log(f"first frame {self.frames[-1][1].shape}")
             self.events.put(("preview", self.frames[-1]))
             self.events.put(("info", f"frames: {len(self.frames)}  zone {self.zone[2]}x{self.zone[3]}"))
             idle = 0
@@ -292,7 +274,7 @@ class Panel:
                     continue
                 time.sleep(SETTLE_MS / 1000.0)
                 new = grab(self.zone)
-                diff = full_diff(self.frames[-1], new)
+                diff = full_diff(self.frames[-1][1], new)
                 log(f"scroll event: diff={diff:.2f}")
                 if diff < SAME_FRAME_DIFF:
                     idle += 1
@@ -301,12 +283,12 @@ class Panel:
                         break
                     continue
                 idle = 0
-                s, score = best_shift(self.frames[-1], new)
-                log(f"shift={s} score={score:.2f}")
-                self.frames.append(new)
-                if s > 0 and score < MSE_LIMIT:
-                    self.events.put(("status", f"captured frame {len(self.frames)} (+{s}px, score {score:.1f})"))
-                    self.events.put(("info", f"frames: {len(self.frames)}  last shift: {s}px"))
+                shift, k = find_overlap(self.frames[-1][1], new)
+                log(f"overlap k={k} shift={shift}")
+                self.frames.append((time.time(), new))
+                if k >= 40:
+                    self.events.put(("status", f"captured frame {len(self.frames)} (overlap {k}px, shift {shift})"))
+                    self.events.put(("info", f"frames: {len(self.frames)}  overlap: {k}px"))
                 else:
                     self.events.put(("status", f"captured frame {len(self.frames)} (no overlap, full frame)"))
                     self.events.put(("info", f"frames: {len(self.frames)}  overlap not found"))
@@ -336,11 +318,10 @@ def selftest():
     tall = (rng.random((1200, 200, 3)) * 255).astype(np.uint8)
     tall[::40] = 30
     frames = [tall[i:i + 400].copy() for i in range(0, 800, 120)]
-    shifts = [(s, round(float(sc), 2)) for s, sc in
-              (best_shift(frames[i - 1], frames[i]) for i in range(1, len(frames)))]
-    print("expected shift=120 for each step:", shifts)
-    assert all(abs(s - 120) <= 1 for s, _ in shifts), "shift detection failed"
-    canvas = stitch(frames)
+    ov = [find_overlap(frames[i - 1], frames[i]) for i in range(1, len(frames))]
+    print("expected shift=120 for each step:", ov)
+    assert all(abs(sh - 120) <= 1 and k >= 250 for sh, k in ov), "shift detection failed"
+    canvas = stitch([(i, f) for i, f in enumerate(frames)])
     ref = tall[:canvas.shape[0]]
     diff = float(np.abs(canvas.astype(np.int16) - ref.astype(np.int16)).mean())
     print(f"stitched {canvas.shape} vs original {ref.shape} diff={diff:.3f}")
