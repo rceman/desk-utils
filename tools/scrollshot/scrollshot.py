@@ -149,7 +149,7 @@ class Panel:
                        activeforeground="#ffffff",
                        font=("Consolas", 9)).pack(anchor="w", padx=10)
         btns = tk.Frame(self.root, bg="#1e1e1e")
-        btns.pack(pady=4, fill="x")
+        btns.pack(pady=(4, 6), fill="x")
         r0 = tk.Frame(btns, bg="#1e1e1e"); r0.pack()
         tk.Button(r0, text="Select Area", command=self.select_area, bg="#4a2d6a", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
@@ -167,7 +167,7 @@ class Panel:
         tk.Button(r3, text="Copy path", command=self.copy_path, bg="#3d3d3d", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         foot = tk.Frame(self.root, bg="#1e1e1e")
-        foot.pack(fill="x", padx=10, pady=(2, 8))
+        foot.pack(fill="x", padx=10, pady=(4, 14))
         short = self.folder.replace(os.path.expanduser("~"), "~")
         tk.Label(foot, text=f"Folder: {short}", bg="#1e1e1e", fg="#7aa2c8",
                  font=("Consolas", 8), anchor="w").pack(side="left", fill="x", expand=True)
