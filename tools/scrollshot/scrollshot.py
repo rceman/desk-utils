@@ -864,7 +864,7 @@ class Panel:
             last_tick = None
             try:
                 while not self.stop_flag.is_set():
-                    if last_tick is not None and self._auto_flag and time.monotonic() - last_tick >= self.scroll_iv:
+                    if last_tick is not None and not wheeled and self._auto_flag and time.monotonic() - last_tick >= self.scroll_iv:
                         last_tick = time.monotonic()
                         try:
                             import ctypes
@@ -878,20 +878,19 @@ class Panel:
                     need_settle = canvas is None or wheeled
                     f = settled_frame(zone) if need_settle else grab(zone)
                     if f is None:
-                        continue  # stay in settle mode until a stable frame lands
-                    wheeled = False
+                        continue  # stay pending until a stable frame lands
                     fh = f.shape[0]
+                    if canvas is not None:
+                        dy, score = find_dy(anchor, f)
+                        if wheeled and (not dy or dy > fh // 2 or score > 999.0):
+                            continue  # still pending — partial repaint rejected
+                    wheeled = False
                     if canvas is None:
                         canvas, anchor, cap_h = f, f, fh
                         last_tick = time.monotonic()
                         frames += 1
                         self.put("preview", canvas)
                     else:
-                        dy, score = find_dy(anchor, f)
-                        if need_settle and (not dy or dy > fh // 2 or score > 999.0):
-                            # post-wheel frame doesn't plausibly match anchor —
-                            # partial repaint; discard without touching state
-                            continue
                         frames += 1
                         if frames % 5 == 0:
                             self.put("preview", f)

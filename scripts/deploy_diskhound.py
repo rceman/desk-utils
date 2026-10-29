@@ -55,16 +55,22 @@ def main():
             fail("diskhound.exe still running — close it first")
 
         tmp = DST + ".new"
+        man_dst = "/mnt/c/Tools/diskhound/diskhound.exe.manifest"
+        man_tmp = man_dst + ".new"
         shutil.copy2(EXE, tmp)
+        # stage the sidecar BEFORE publishing anything — failure aborts cleanly
+        try:
+            shutil.copy2(MANIFEST, man_tmp)
+        except OSError as e:
+            if not mt:
+                fail(f"no mt AND sidecar staging failed ({e}) — nothing published")
+            man_tmp = None
+            info(f"warn: loose manifest staging failed ({e}) — embedded manifest present")
         if sha256(tmp) != sha256(EXE):
             fail("hash mismatch after staging")
         os.replace(tmp, DST)
-        try:
-            shutil.copy2(MANIFEST, os.path.join("/mnt/c/Tools/diskhound", "diskhound.exe.manifest"))
-        except OSError as e:
-            if not mt:
-                fail(f"no mt AND loose manifest copy failed ({e}) — refusing to publish unembedded exe")
-            info(f"warn: loose manifest copy failed ({e}) — embedded manifest present")
+        if man_tmp:
+            os.replace(man_tmp, man_dst)
         info(f"published -> {DST_WIN} (sha {sha256(DST)[:12]})")
 
         if launch:

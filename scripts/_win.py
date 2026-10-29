@@ -74,7 +74,7 @@ def match_cmdline(cmd, exact):
     e = exact.lower().replace("/", "\\")
     c = cmd.lower().replace("/", "\\").strip().strip('"')
     if e.endswith(".py"):
-        return e in c  # full canonical path is unique; arg may be anywhere
+        return c.endswith(e) or c.endswith(e + '"')  # script must be the last arg
     return c == e or c.startswith(e + " ") or c.startswith(e + '"') or (e + '"') in c
 
 
