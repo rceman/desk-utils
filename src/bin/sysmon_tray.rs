@@ -798,7 +798,7 @@ unsafe extern "system" fn widget_proc(hwnd: HWND, msg: u32, w: usize, l: isize) 
                  if wp < 0 { dim } else if wp < 20 { warn } else { white }),
                 ("CPU", { let ct = CPU_TEMP.load(Relaxed); if ct >= 0 { format!("{}°", ct) } else { "—".into() } }, white),
                 ("GPU", ttxt, white),
-                ("CDX", { let c = CDX_PCT.load(Relaxed); if c >= 0 { format!("{}%", c) } else { "—".into() } },
+                ("CDX", { let c = CDX_PCT.load(Relaxed); if c >= 0 { format!("{}%", (100 - c).max(0)) } else { "—".into() } },
                  if CDX_PCT.load(Relaxed) >= 80 { warn } else { white }),
             ];
             for (i, (lbl, val, col)) in cells.iter().enumerate() {
