@@ -51,7 +51,7 @@ def find_dy(prev, new):
     if float(pa.std()) < 1.5 or float(pb.std()) < 1.5:
         return 0, 999.0
     base = float(np.abs(ga - gb).mean())   # zero-motion pixel error
-    lim = min(MAX_DY, h - 60)
+    lim = min(max(MAX_DY, h - 100), h - 60)
     cands = []
     for dy in list(range(1, lim + 1)) + list(range(-1, -lim - 1, -1)):
         if dy > 0:
