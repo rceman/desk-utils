@@ -110,6 +110,7 @@ const ID_OPEN: usize = 1;
 const ID_OPEN_ADMIN: usize = 4;
 const ID_REFRESH: usize = 2;
 const ID_EXIT: usize = 3;
+const ID_RESTART_ADMIN: usize = 6;
 const ID_WIDGET: usize = 5;
 const WS_POPUP: u32 = 0x8000_0000;
 const WS_VISIBLE: u32 = 0x1000_0000;
@@ -1289,6 +1290,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 AppendMenuW(m, MF_STRING, ID_OPEN, wide("Open diskhound").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_OPEN_ADMIN, wide("Open as administrator").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_REFRESH, wide("Refresh").as_ptr());
+                AppendMenuW(m, MF_STRING, ID_RESTART_ADMIN, wide("Restart (admin)").as_ptr());
                 AppendMenuW(m, MF_STRING, ID_SCROLL, wide("Open ScrollShot").as_ptr());
                 let wf = if WIDGET_ON.load(std::sync::atomic::Ordering::Relaxed) { MF_CHECKED } else { 0 };
                 AppendMenuW(m, wf, ID_WIDGET, wide("Taskbar widget").as_ptr());
@@ -1328,6 +1330,34 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
                 park_widget();
                 0
             }
+            ID_RESTART_ADMIN => unsafe {
+                let mut buf = [0u16; 600];
+                GetModuleFileNameW(std::ptr::null_mut(), buf.as_mut_ptr(), 600);
+                let r = ShellExecuteW(hwnd, wide("runas").as_ptr(), buf.as_ptr(),
+                                    std::ptr::null(), std::ptr::null(), 5);
+                if r > 32 {
+                    let mut d = NotifyIconData {
+                        cb_size: std::mem::size_of::<NotifyIconData>() as u32,
+                        hwnd,
+                        uid: 1,
+                        flags: 0,
+                        msg: 0,
+                        icon: null_mut(),
+                        tip: [0u16; 128],
+                        state: 0,
+                        state_mask: 0,
+                        info: [0u16; 256],
+                        timeout_or_version: 0,
+                        info_title: [0u16; 64],
+                        info_flags: 0,
+                        guid_item: [0u8; 16],
+                        balloon_icon: null_mut(),
+                    };
+                    Shell_NotifyIconW(NIM_DELETE, &mut d);
+                    DestroyWindow(hwnd);
+                }
+                0
+            },
             ID_EXIT => {
                 let mut d = NotifyIconData {
                     cb_size: std::mem::size_of::<NotifyIconData>() as u32,

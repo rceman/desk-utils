@@ -410,7 +410,7 @@ class Panel:
         tk.Checkbutton(row, text="Auto scroll", variable=self.auto_scroll, bg="#1e1e1e",
                        fg="#d0d0d0", selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff", font=("Consolas", 9)).pack(side="left")
-        self._ivbtn = tk.Button(row, text="1.0s", command=self.cycle_iv, bg="#3d3d3d", fg="#a0d0a0",
+        self._ivbtn = tk.Button(row, text=f"{self.scroll_iv}s", command=self.cycle_iv, bg="#3d3d3d", fg="#a0d0a0",
                                 font=("Consolas", 8), width=5)
         self._ivbtn.pack(side="left", padx=4)
         self.border_var = tk.BooleanVar(value=True)
@@ -714,15 +714,30 @@ class Panel:
             log(f"kb hook crashed: {e!r}")
 
     def _hook_body(self):
-        import ctypes
+        import ctypes, time
         from ctypes import wintypes
         u = ctypes.windll.user32
         ok = u.RegisterHotKey(None, 1, 0, 0x2C)  # VK_SNAPSHOT
         log(f"hotkey={ok} err={ctypes.windll.kernel32.GetLastError()}")
         m = wintypes.MSG()
-        while u.GetMessageW(ctypes.byref(m), None, 0, 0) > 0:
-            if m.message == 0x0312 and self._prtscr_flag:
-                self.put("shot", None)
+        down = chord = False
+        while True:
+            while u.PeekMessageW(ctypes.byref(m), None, 0, 0, 1):
+                if m.message == 0x0312 and self._prtscr_flag:
+                    self.put("shot", None)
+            if self._prtscr_flag:
+                st = bool(u.GetAsyncKeyState(0x2C) & 0x8000)
+                ch = all(u.GetAsyncKeyState(k) & 0x8000 for k in (0x5B, 0x10, 0x53))
+                if st and not down:
+                    log("prtscr VK_SNAPSHOT")
+                    self.put("shot", None)
+                if ch and not chord:
+                    log("prtscr chord Win+Shift+S")
+                    self.put("shot", None)
+                down, chord = st, ch
+            else:
+                down = chord = False
+            time.sleep(0.04)
 
     def cancel(self):
         self.cancel_flag.set()
