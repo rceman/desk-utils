@@ -4,8 +4,9 @@
   (`rust-best-practices`, `rust-port`, `rust-review`; origin github.com/morganlinton/BeautifulRust,
   www.beautifulrust.dev). Consult before writing/reviewing Rust.
 - **Sol review workflow:** `tools/scrollshot/SOL_REVIEW.md` — airelay review_sol session usage.
-- **ScrollShot deploy:** `python tools/scrollshot/activate.py --restart` (copies to
-  `C:\Tools\diskhound\tools\scrollshot\`, restarts pythonw).
+- **Deployment:** `DEPLOYMENT.md` — canonical scripts `scripts/deploy_{scrollshot,sysmon_tray,diskhound}.py`.
+  WSL is authoritative; `C:\Tools\dh-build-*` = staging, `C:\Tools\diskhound` = runtime.
+  `activate.py` is deprecated (forwards to the WSL script).
 - **ScrollShot runtime:** log at `C:\Users\therceman\Pictures\Screenshots\ScrollShot\scrollshot.log`.
   Verify UI changes via log (`start`, `panel ready`, `kb hook=`) — silent Tk callback/hook
   crashes are invisible under pythonw. Wrap hook/worker bodies in try/except → `log()`.

@@ -1,31 +1,21 @@
-"""Deploy scrollshot.py from repo to C:\\Tools\\diskhound\\tools\\scrollshot\\.
+"""DEPRECATED — use the canonical WSL deploy script instead:
 
-Usage:  python activate.py            -> copy deployed script over the repo target dir
-        python activate.py --restart  -> also restart the running ScrollShot app
+    python3 ~/git/diskhound/scripts/deploy_scrollshot.py
+
+This file only forwards to the real deployer so old habits keep working.
 """
-import argparse, os, shutil, subprocess, sys
+import os, subprocess, sys
 
-REPO = os.path.dirname(os.path.abspath(__file__))
-DEPLOY = r"C:\Tools\diskhound\tools\scrollshot"
+REPO = os.environ.get("DISKHOUND_REPO", "/home/therceman/git/diskhound")
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--restart", action="store_true")
-    args = ap.parse_args()
-
-    src = os.path.join(REPO, "scrollshot.py")
-    dst = os.path.join(DEPLOY, "scrollshot.py")
-    os.makedirs(DEPLOY, exist_ok=True)
-    shutil.copy2(src, dst)
-    print(f"deployed: {dst}")
-
-    if args.restart:
-        subprocess.run(["powershell", "-NoProfile", "-Command",
-                        "Get-Process pythonw -ErrorAction SilentlyContinue | Stop-Process -Force"],
-                       check=False)
-        subprocess.Popen(["pythonw", dst])
-        print("restarted")
+    script = os.path.join(REPO, "scripts", "deploy_scrollshot.py")
+    if os.path.exists("/mnt/c") and os.path.exists(script):
+        sys.exit(subprocess.call([sys.executable, script]))
+    print("activate.py is deprecated. From WSL run:")
+    print("    python3 ~/git/diskhound/scripts/deploy_scrollshot.py")
+    sys.exit(1)
 
 
 if __name__ == "__main__":
