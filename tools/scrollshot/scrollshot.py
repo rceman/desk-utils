@@ -300,7 +300,7 @@ class Border:
             self._set_cursor(None)
 
     def _press(self, e):
-        if self._closed:
+        if self._closed or getattr(self, "locked", False):
             return "break"
         mode = self._hit(e.x_root, e.y_root)
         if mode is not None:
@@ -374,9 +374,12 @@ class Panel:
         self.out_path = None
         self.zone = None
         self.border = None
+        self._border_locked = False
         self.recording = False
         self.stop_flag = threading.Event()
         self.cancel_flag = threading.Event()
+        self._shot_pending = threading.Event()
+        self._taking_shot = False
         self.start_flag = threading.Event()
         self.q = queue.Queue()
         self.root = tk.Tk()
@@ -402,12 +405,13 @@ class Panel:
 
         self.scroll_iv = 0.25
         self.auto_scroll = tk.BooleanVar(value=False)
+        self._auto_flag = False
         self.prtscr = tk.BooleanVar(value=True)
         self._prtscr_flag = True
         self.copy_as_path = tk.BooleanVar(value=True)
         row = tk.Frame(self.root, bg="#1e1e1e")
         row.pack(anchor="w", padx=10)
-        tk.Checkbutton(row, text="Auto scroll", variable=self.auto_scroll, bg="#1e1e1e",
+        tk.Checkbutton(row, text="Auto scroll", variable=self.auto_scroll, bg="#1e1e1e", command=self._sync_flags,
                        fg="#d0d0d0", selectcolor="#333333", activebackground="#1e1e1e",
                        activeforeground="#ffffff", font=("Consolas", 9)).pack(side="left")
         self._ivbtn = tk.Button(row, text=f"{self.scroll_iv}s", command=self.cycle_iv, bg="#3d3d3d", fg="#a0d0a0",
@@ -587,7 +591,7 @@ class Panel:
             self.btn_rec.config(state="disabled")
             self._st = "Stopping…"; self._render()
 
-    def shot(self):
+    def _shot_impl(self):
         if self.recording:
             self._st = "Finish recording first"; self._render()
             return
@@ -611,6 +615,16 @@ class Panel:
             log(f"shot error: {e}")
             self._st = f"shot error: {e}"; self._render()
 
+    def shot(self):
+        if self._taking_shot:
+            return
+        self._taking_shot = True
+        try:
+            return self._shot_impl()
+        finally:
+            self._taking_shot = False
+            self._shot_pending.clear()
+
     def _new_path(self):
         import uuid
         base = f"scrollshot_{datetime.datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
@@ -629,7 +643,11 @@ class Panel:
                 elif kind == "rec":
                     self.rec.set(payload)
                 elif kind == "shot":
-                    self.shot()
+                    try:
+                        if self._prtscr_flag:
+                            self.shot()
+                    finally:
+                        self._shot_pending.clear()
                 elif kind == "preview":
                     self.show(payload)
                 elif kind == "btn":
@@ -704,6 +722,7 @@ class Panel:
 
     def _sync_flags(self):
         self._prtscr_flag = self.prtscr.get()
+        self._auto_flag = self.auto_scroll.get()
 
     def _prtscr_hook(self):
         import ctypes
@@ -714,30 +733,86 @@ class Panel:
             log(f"kb hook crashed: {e!r}")
 
     def _hook_body(self):
-        import ctypes, time
-        from ctypes import wintypes
-        u = ctypes.windll.user32
-        ok = u.RegisterHotKey(None, 1, 0, 0x2C)  # VK_SNAPSHOT
-        log(f"hotkey={ok} err={ctypes.windll.kernel32.GetLastError()}")
-        m = wintypes.MSG()
-        down = chord = False
-        while True:
-            while u.PeekMessageW(ctypes.byref(m), None, 0, 0, 1):
-                if m.message == 0x0312 and self._prtscr_flag:
+        """Best-effort PrintScreen plus an explicit Ctrl+Alt+F9 fallback.
+
+        Requires _shot_pending = threading.Event() created on the main thread.
+        This observes PrintScreen through polling; polling cannot suppress Windows.
+        """
+        import ctypes
+        import time
+        from ctypes import wintypes as w
+
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        u.RegisterHotKey.argtypes = [w.HWND, ctypes.c_int, w.UINT, w.UINT]
+        u.RegisterHotKey.restype = w.BOOL
+        u.UnregisterHotKey.argtypes = [w.HWND, ctypes.c_int]
+        u.UnregisterHotKey.restype = w.BOOL
+        u.PeekMessageW.argtypes = [ctypes.POINTER(w.MSG), w.HWND, w.UINT, w.UINT, w.UINT]
+        u.PeekMessageW.restype = w.BOOL
+        u.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        u.GetAsyncKeyState.restype = w.SHORT
+
+        WM_HOTKEY, WM_QUIT, PM_REMOVE = 0x0312, 0x0012, 1
+        NOREPEAT = 0x4000
+        bindings = {
+            0x5100: (NOREPEAT, 0x2C, "PrintScreen"),
+            0x5101: (NOREPEAT | 0x0002 | 0x0001, 0x78, "Ctrl+Alt+F9"),
+        }
+        active = set()
+        message = w.MSG()
+        was_down = bool(u.GetAsyncKeyState(0x2C) & 0x8000)
+        retry_at = 0.0
+        last_sent = float("-inf")
+        try:
+            while not self.cancel_flag.is_set():
+                enabled = bool(self._prtscr_flag)  # Plain Python flag, never a Tk variable.
+                now = time.monotonic()
+                if not enabled:
+                    for ident in list(active):
+                        if not u.UnregisterHotKey(None, ident):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        active.remove(ident)
+                    retry_at = 0.0
+                elif now >= retry_at:
+                    for ident, (mods, vk, name) in bindings.items():
+                        if ident in active:
+                            continue
+                        ctypes.set_last_error(0)
+                        if u.RegisterHotKey(None, ident, mods, vk):
+                            active.add(ident)
+                            log(f"registered {name}; delivery still needs a keypress test")
+                        else:
+                            log(f"RegisterHotKey {name} failed: {ctypes.get_last_error()}")
+                    retry_at = now + 2.0
+
+                requested = False
+                while u.PeekMessageW(ctypes.byref(message), None, 0, 0, PM_REMOVE):
+                    if message.message == WM_QUIT:
+                        return
+                    if message.message == WM_HOTKEY and int(message.wParam) in active:
+                        log(f"WM_HOTKEY id={int(message.wParam)} lParam={int(message.lParam):#x}")
+                        requested = True
+
+                down = bool(u.GetAsyncKeyState(0x2C) & 0x8000)
+                plain = not any(u.GetAsyncKeyState(vk) & 0x8000
+                                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C))
+                polled = down and not was_down and plain
+                if enabled and polled:
+                    log("PrintScreen polling edge; Windows action is not suppressed")
+                requested = requested or polled
+                was_down = down  # Update even while disabled; no artificial enable edge.
+                # Coalesce both sources and auto-repeat while a selector is outstanding.
+                now = time.monotonic()
+                if (enabled and requested and now - last_sent >= 0.25 and
+                        not self._shot_pending.is_set()):
+                    self._shot_pending.set()
                     self.put("shot", None)
-            if self._prtscr_flag:
-                st = bool(u.GetAsyncKeyState(0x2C) & 0x8000)
-                ch = all(u.GetAsyncKeyState(k) & 0x8000 for k in (0x5B, 0x10, 0x53))
-                if st and not down:
-                    log("prtscr VK_SNAPSHOT")
-                    self.put("shot", None)
-                if ch and not chord:
-                    log("prtscr chord Win+Shift+S")
-                    self.put("shot", None)
-                down, chord = st, ch
-            else:
-                down = chord = False
-            time.sleep(0.04)
+                    last_sent = now
+                self.cancel_flag.wait(0.02)
+        finally:
+            for ident in active:
+                if not u.UnregisterHotKey(None, ident):
+                    log(f"UnregisterHotKey {ident} failed: {ctypes.get_last_error()}")
 
     def cancel(self):
         self.cancel_flag.set()
@@ -760,10 +835,10 @@ class Panel:
             frames = scrolls = 0
             self.put("status", "Recording")
             last_new = time.monotonic()
-            last_tick = 0.0
+            last_tick = time.monotonic()
             try:
                 while not self.stop_flag.is_set():
-                    if self.auto_scroll.get() and time.monotonic() - last_tick >= self.scroll_iv:
+                    if self._auto_flag and time.monotonic() - last_tick >= self.scroll_iv:
                         last_tick = time.monotonic()
                         try:
                             import ctypes

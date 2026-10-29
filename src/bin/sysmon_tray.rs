@@ -111,7 +111,7 @@ const ID_OPEN_ADMIN: usize = 4;
 const ID_REFRESH: usize = 2;
 const ID_EXIT: usize = 3;
 const ID_RESTART_ADMIN: usize = 6;
-const ID_WIDGET: usize = 5;
+const ID_WIDGET: usize = 7;
 const WS_POPUP: u32 = 0x8000_0000;
 const WS_VISIBLE: u32 = 0x1000_0000;
 const WS_EX_TOPMOST: u32 = 0x8;
@@ -540,30 +540,51 @@ type PawnExec = unsafe extern "system" fn(isize, *const u8, *const u64, usize, *
 static PAWN_HANDLE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static PAWN_EXEC: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+fn pawnio_diag(message: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("sysmon-pawnio.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "pid={} {message}", std::process::id());
+    }
+}
+
 fn init_pawnio() {
     use std::sync::atomic::Ordering::Relaxed;
+    type PawnClose = unsafe extern "system" fn(isize) -> i32;
+    // SAFETY: ABI matches the installed PawnIOLib.h. Validate raw export
+    // addresses before creating non-null function pointers. Keep the DLL
+    // loaded for the lifetime of the published executor pointer.
     unsafe {
         let m = LoadLibraryW(wide("C:\\Program Files\\PawnIO\\PawnIOLib.dll").as_ptr());
         if m.is_null() {
+            pawnio_diag(&format!("LoadLibrary failed: {}", GetLastError()));
             return;
         }
-        let open: PawnOpen = std::mem::transmute(GetProcAddress(m, b"pawnio_open\0".as_ptr()));
-        let load: PawnLoad = std::mem::transmute(GetProcAddress(m, b"pawnio_load\0".as_ptr()));
-        let exec: PawnExec = std::mem::transmute(GetProcAddress(m, b"pawnio_execute\0".as_ptr()));
-        let (o, l, e) = (open as usize, load as usize, exec as usize);
-        if o == 0 || l == 0 || e == 0 {
+        let o = GetProcAddress(m, b"pawnio_open".as_ptr());
+        let l = GetProcAddress(m, b"pawnio_load".as_ptr());
+        let e = GetProcAddress(m, b"pawnio_execute".as_ptr());
+        let c = GetProcAddress(m, b"pawnio_close".as_ptr());
+        if o.is_null() || l.is_null() || e.is_null() || c.is_null() {
+            pawnio_diag(&format!("missing export: open={o:p} load={l:p} exec={e:p} close={c:p}"));
             return;
         }
-        let mut h: isize = 0;
-        if open(&mut h) != 0 {
-            return;
-        }
+        let open: PawnOpen = std::mem::transmute(o);
+        let load: PawnLoad = std::mem::transmute(l);
+        let close: PawnClose = std::mem::transmute(c);
+        let mut h = 0isize;
+        let hr = open(&mut h);
+        pawnio_diag(&format!("open hr=0x{:08X} handle=0x{h:X}", hr as u32));
+        if hr < 0 || h == 0 { return; }
         let blob = include_bytes!("IntelMSR.bin");
-        if load(h, blob.as_ptr(), blob.len()) != 0 {
+        let hr = load(h, blob.as_ptr(), blob.len());
+        pawnio_diag(&format!("load hr=0x{:08X} blob_bytes={}", hr as u32, blob.len()));
+        if hr < 0 {
+            close(h);
             return;
         }
         PAWN_HANDLE.store(h, Relaxed);
-        PAWN_EXEC.store(e, Relaxed);
+        PAWN_EXEC.store(e as usize, Relaxed);
+        pawnio_diag("ready");
     }
 }
 
@@ -588,7 +609,12 @@ fn read_msr(msr: u64) -> Option<u64> {
             1,
             &mut ret,
         );
-        if hr == 0 && ret >= 1 { Some(out[0]) } else { None }
+static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+if N.fetch_add(1, Relaxed) < 32 {
+    pawnio_diag(&format!("msr=0x{msr:X} hr=0x{:08X} ret={ret} raw=0x{:016X}",
+                         hr as u32, out[0]));
+}
+if hr >= 0 && ret == 1 { Some(out[0]) } else { None }
     }
 }
 
@@ -604,15 +630,17 @@ fn cpu_temp() -> Option<i32> {
         let cores = 8usize;
         let th = GetCurrentThread();
         for c in 0..cores {
-            SetThreadAffinityMask(th, 1usize << c);
-            if let Some(v) = read_msr(0x19C) {
-                // bits 22:16 = degrees below TjMax
+            let previous = SetThreadAffinityMask(th, 1usize << c);
+            if previous == 0 { continue; }
+            let sample = read_msr(0x19C);
+            SetThreadAffinityMask(th, previous);
+            if let Some(v) = sample {
+                if v & (1u64 << 31) == 0 { continue; }
                 let delta = ((v >> 16) & 0x7F) as i32;
                 let t = tjmax - delta;
                 hottest = Some(hottest.map_or(t, |h| h.max(t)));
             }
         }
-        SetThreadAffinityMask(th, usize::MAX);
         hottest
     }
 }
@@ -1390,6 +1418,43 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> 
     }
 }
 
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CloseHandle(h: *mut c_void) -> i32;
+}
+
+struct InstanceGuard(*mut c_void);
+impl Drop for InstanceGuard {
+    fn drop(&mut self) {
+        // SAFETY: this guard uniquely owns a valid CreateMutexW handle.
+        unsafe { CloseHandle(self.0); }
+    }
+}
+
+fn instance_guard() -> Option<InstanceGuard> {
+    for _ in 0..20 {
+        // SAFETY: null security attributes; name is NUL-terminated and alive
+        // throughout the call. Existence is the guard, so ownership is FALSE.
+        let (h, error) = unsafe {
+            let h = CreateMutexW(null_mut(), 0, wide("sysmon-tray-mutex").as_ptr());
+            (h, GetLastError())
+        };
+        if h.is_null() {
+            pawnio_diag(&format!("CreateMutex failed: {error}"));
+            return None;
+        }
+        if error != 183 {
+            return Some(InstanceGuard(h));
+        }
+        // SAFETY: CreateMutexW opened an existing object. Do not retain its
+        // handle while waiting for that object's last owner to exit.
+        unsafe { CloseHandle(h); }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    pawnio_diag("another instance still holds the mutex after 10 seconds");
+    None
+}
+
 pub fn main() {
     unsafe {
         // per-monitor v2: sharp rendering at any DPI (else the window is
@@ -1397,20 +1462,8 @@ pub fn main() {
         if SetProcessDpiAwarenessContext(-4) == 0 {
             SetProcessDPIAware();
         }
-        // retry: on "Restart (admin)" the old instance may still hold the mutex
-        let mut ok = false;
-        for _ in 0..20 {
-            CreateMutexW(std::ptr::null_mut(), 1, wide("sysmon-tray-mutex").as_ptr());
-            if GetLastError() != 183 {
-                ok = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-        if !ok {
-            return; // already running
-        }
     }
+    let Some(_instance) = instance_guard() else { return; };
     let inst = unsafe { GetModuleHandleW(std::ptr::null_mut()) };
     let class = wide("disktray");
     let wc = WndClassEx {
