@@ -152,6 +152,7 @@ class Panel:
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
         self.root.geometry(self._place(zone))
+        self.root.resizable(False, False)
         self.status = tk.StringVar(value="Press Start to begin")
         tk.Label(self.root, textvariable=self.status, bg="#1e1e1e", fg="#d0d0d0",
                  font=("Consolas", 10), justify="left", wraplength=340).pack(padx=10, pady=(10, 4), anchor="w")
@@ -350,7 +351,6 @@ class Panel:
             self.put("preview", canvas)
             self.put("status", f"Saved {os.path.basename(self.out_path)}  {canvas.shape[1]}x{canvas.shape[0]}")
             self.put("info", f"frames: {frames}  → {self.out_path}")
-            self.border.close()
         except Exception as e:
             log(f"save error: {e}")
             self.put("status", f"save error: {e}")
