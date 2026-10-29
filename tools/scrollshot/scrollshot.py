@@ -5,7 +5,7 @@ from PIL import Image, ImageTk
 
 # Must run before any window is created: logical px == physical px for mss/grab
 try:
-    ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # PER_MONITOR_AWARE_V2
+    ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # PER_MONITOR_AWARE_V2
 except Exception:
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
