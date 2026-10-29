@@ -68,12 +68,21 @@ def main():
             info(f"warn: loose manifest staging failed ({e}) — embedded manifest present")
         if sha256(tmp) != sha256(EXE):
             fail("hash mismatch after staging")
+        # phase 1: verified backups — failure aborts with NO live path touched
         bak = DST + ".bak"; man_bak = man_dst + ".bak"
         try:
             if os.path.exists(DST):
                 shutil.copy2(DST, bak)
+                if sha256(bak) != sha256(DST):
+                    fail("backup verification failed — nothing published")
             if os.path.exists(man_dst):
                 shutil.copy2(man_dst, man_bak)
+                if sha256(man_bak) != sha256(man_dst):
+                    fail("manifest backup verification failed — nothing published")
+        except OSError as e:
+            fail(f"backup preparation failed ({e}) — nothing published")
+        # phase 2: publish; rollback uses only this run's verified backups
+        try:
             if man_tmp:
                 os.replace(man_tmp, man_dst)
             os.replace(tmp, DST)
