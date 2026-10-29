@@ -717,33 +717,12 @@ class Panel:
         import ctypes
         from ctypes import wintypes
         u = ctypes.windll.user32
-
-        class KB(ctypes.Structure):
-            _fields_ = [("vk", wintypes.DWORD), ("sc", wintypes.DWORD),
-                        ("fl", wintypes.DWORD), ("t", wintypes.DWORD),
-                        ("ex", wintypes.LPARAM)]
-
-        CB = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
-
-        def proc(nc, wp, lp):
-            if nc >= 0 and wp in (0x100, 0x101) and self._prtscr_flag:
-                vk = ctypes.cast(lp, ctypes.POINTER(KB)).contents.vk
-                if vk in (0x2C, 0x2A):
-                    if wp == 0x100 and not getattr(self, "_shot_fired", False):
-                        self._shot_fired = True
-                        log(f"prtscr vk={vk:#x}")
-                        self.put("shot", None)
-                    return 1
-                if vk and getattr(self, "_shot_fired", False) is None:
-                    log(f"first key vk={vk:#x}")
-            return u.CallNextHookEx(None, nc, wp, lp)
-
-        self._kb_cb = CB(proc)
-        self._hook = u.SetWindowsHookExW(13, self._kb_cb, None, 0)
-        log(f"kb hook={self._hook} err={ctypes.windll.kernel32.GetLastError()}")
+        ok = u.RegisterHotKey(None, 1, 0, 0x2C)  # VK_SNAPSHOT -> this thread's queue
+        log(f"hotkey={ok} err={ctypes.windll.kernel32.GetLastError()}")
         m = wintypes.MSG()
         while u.GetMessageW(ctypes.byref(m), None, 0, 0) > 0:
-            pass
+            if m.message == 0x0312 and self._prtscr_flag:
+                self.put("shot", None)
 
     def cancel(self):
         self.cancel_flag.set()
