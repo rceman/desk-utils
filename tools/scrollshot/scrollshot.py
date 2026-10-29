@@ -205,6 +205,10 @@ class Panel:
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         tk.Button(r2, text="Open folder", command=self.open_folder, bg="#2d4a6a", fg="white",
                   font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
+        r3 = tk.Frame(btns, bg="#1e1e1e")
+        r3.pack()
+        tk.Button(r3, text="Copy image", command=self.copy_image, bg="#3d3d3d", fg="white",
+                  font=("Consolas", 10), width=14).pack(side="left", padx=4, pady=2)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
         self.photo = None
         self.worker = threading.Thread(target=self.record_loop, daemon=True)
@@ -283,6 +287,23 @@ class Panel:
                 os.startfile(self.folder)
         except Exception as e:
             log(f"open folder: {e}")
+
+    def copy_image(self):
+        try:
+            path = self.out_path if os.path.exists(self.out_path) else None
+            if not path:
+                self.put("status", "Nothing to copy yet")
+                return
+            ps = ('Add-Type -AssemblyName System.Drawing,System.Windows.Forms;'
+                  f'$img=[System.Drawing.Image]::FromFile("{path}");'
+                  '[System.Windows.Forms.Clipboard]::SetImage($img);$img.Dispose()')
+            import subprocess
+            subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+                             creationflags=0x08000000)
+            self.put("status", f"Copied {os.path.basename(path)} to clipboard")
+            log(f"copy {path}")
+        except Exception as e:
+            log(f"copy error: {e}")
 
     def finish(self):
         self.stop_flag.set()
