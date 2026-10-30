@@ -40,12 +40,12 @@ def grab(zone):
     return np.array(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
 
 
-def settled_frame(zone, tries=6):
+def settled_frame(zone, tries=3):
     """Return a stable grab: two consecutive captures must be pixel-identical-ish.
     Discards mid-repaint frames so anchor/matcher never see partial content."""
     for _ in range(tries):
         a = grab(zone)
-        time.sleep(0.08)
+        time.sleep(0.05)
         b = grab(zone)
         if float(np.abs(a.astype(np.float32) - b.astype(np.float32)).mean()) < 2.0:
             return b
