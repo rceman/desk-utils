@@ -680,6 +680,13 @@ class Panel:
                     self.btn_rec.config(text="Start", bg="#2d6a2d", state="normal" if self.zone else "disabled")
         except queue.Empty:
             pass
+        ev = QUIT_EVT[0]
+        if ev:
+            import ctypes
+            if ctypes.windll.kernel32.WaitForSingleObject(ev, 0) == 0:
+                log("quit event — old instance exiting")
+                self.cancel()
+                return
         self.root.after(80, self.poll)
 
     def _render(self):
@@ -842,9 +849,15 @@ class Panel:
     def cancel(self):
         self.cancel_flag.set()
         self.stop_flag.set()
-        if self.border:
-            self.border.close()
-        self.root.destroy()
+        try:
+            if self.border:
+                self.border.close()
+        except Exception as e:
+            log(f"border close: {e}")
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def record_loop(self):
         while not self.cancel_flag.is_set():
@@ -996,6 +1009,29 @@ def selftest():
     print("selftest OK")
 
 
+QUIT_EVT = [None]
+
+def ensure_singleton():
+    """One instance only: new instance signals old to quit via named event,
+    waits for the singleton mutex, then owns it for its lifetime."""
+    import ctypes
+    k = ctypes.windll.kernel32
+    QUIT_EVT[0] = k.CreateEventW(None, True, False, "ScrollShotQuit")
+    mtx = k.CreateMutexW(None, False, "ScrollShotSingleton")
+    if not mtx:
+        log("singleton mutex failed — running unguarded")
+        return
+    if k.GetLastError() == 183:  # ERROR_ALREADY_EXISTS — old instance alive
+        log("old instance found — signaling quit")
+        k.SetEvent(QUIT_EVT[0])
+        r = k.WaitForSingleObject(mtx, 4000)
+        if r not in (0, 0x80):  # WAIT_OBJECT_0 / ABANDONED both mean we own it
+            log("old instance still holds mutex — proceeding anyway")
+        k.ResetEvent(QUIT_EVT[0])
+    else:
+        k.WaitForSingleObject(mtx, 0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
@@ -1011,6 +1047,7 @@ def main():
     global LOG_PATH
     LOG_PATH = os.path.join(out_dir, "scrollshot.log")
     log("start")
+    ensure_singleton()
     try:
         Panel(tk, out_dir).start()
     except Exception:
