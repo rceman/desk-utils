@@ -7,6 +7,8 @@
 - **Deployment:** `DEPLOYMENT.md` — canonical scripts `scripts/deploy_{scrollshot,sysmon_tray,diskhound}.py`.
   WSL is authoritative; `C:\Tools\dh-build-*` = staging, `C:\Tools\diskhound` = runtime.
   `activate.py` is deprecated (forwards to the WSL script).
+- **ScrollShot→MD:** `tools/scrollshot/SCROLL2MD.md` — sausage PNG to markdown
+  pipeline (chunk with overlap → parallel vision agents → stitch).
 - **ScrollShot runtime:** log at `C:\Users\therceman\Pictures\Screenshots\ScrollShot\scrollshot.log`.
   Verify UI changes via log (`start`, `panel ready`, `kb hook=`) — silent Tk callback/hook
   crashes are invisible under pythonw. Wrap hook/worker bodies in try/except → `log()`.
