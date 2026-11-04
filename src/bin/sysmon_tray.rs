@@ -149,6 +149,8 @@ static POPUP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 static POPUP_HWND: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static POPUP_LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 static DVN_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static DVN_RESET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static DVN_BAL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
 static CDX_SEC: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 static CDX_RESET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CDX_PCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
@@ -697,6 +699,49 @@ fn read_dvn() -> Option<i32> {
     v.parse::<i32>().ok()
 }
 
+fn dvn_credentials() -> Option<(String, String)> {
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let txt = std::fs::read_to_string(format!("{home}\\.local\\share\\devin\\credentials.toml")).ok()?;
+    let get = |k: &str| -> Option<String> {
+        for l in txt.lines() {
+            let l = l.trim();
+            if l.starts_with('#') || !l.contains('=') { continue; }
+            let (a, b) = l.split_once('=')?;
+            if a.trim() == k { return Some(b.trim().trim_matches('"').trim_matches('\'').to_string()); }
+        }
+        None
+    };
+    Some((get("api_server_url")?, get("windsurf_api_key")?))
+}
+
+fn fetch_dvn() {
+    use std::os::windows::process::CommandExt;
+    let Some((url, key)) = dvn_credentials() else { return };
+    let body = format!("{{\"metadata\":{{\"apiKey\":\"{key}\",\"ideName\":\"devin-cli\",\"ideVersion\":\"3000.11.234\",\"extensionName\":\"devin-cli\",\"extensionVersion\":\"3000.11.234\"}}}}");
+    let ep = format!("{}/exa.seat_management_pb.SeatManagementService/GetUserStatus", url.trim_end_matches('/'));
+    let out = std::process::Command::new("curl.exe")
+        .args(["-s", "--max-time", "20", "-X", "POST", &ep,
+               "-H", "Content-Type: application/json", "-H", "Connect-Protocol-Version: 1",
+               "-d", &body])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output();
+    let Ok(out) = out else { return };
+    use std::sync::atomic::Ordering::Relaxed;;
+    if !out.status.success() { return }
+    let txt = String::from_utf8_lossy(&out.stdout);
+    if !txt.contains("userStatus") { return }
+    let num = |key: &str| -> Option<i64> {
+        let i = txt.find(key)? + key.len();
+        let v: String = txt[i..].trim_start().trim_start_matches('"')
+            .chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+        v.parse::<i64>().ok()
+    };
+    // proto3 omits zero scalars -> missing = 0% left
+    DVN_PCT.store(num("\"weeklyQuotaRemainingPercent\":").unwrap_or(0) as i32, Relaxed);
+    if let Some(r) = num("\"weeklyQuotaResetAtUnix\":") { DVN_RESET.store(r, Relaxed); }
+    if let Some(b) = num("\"overageBalanceMicros\":") { DVN_BAL.store(b, Relaxed); }
+}
+
 fn read_cdx() -> Option<i32> {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     // fresh cache written by codex_ping.ps1 (cheap direct API ping)
@@ -790,12 +835,19 @@ fn collect_metrics() {
         // Codex 5h limit usage (throttled: every ~20 ticks = 10s)
         {
             static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-            if N.fetch_add(1, Relaxed) % 20 == 0 {
-                if let Some(p) = read_cdx() {
-                    CDX_PCT.store(p, Relaxed);
+            {
+                let n = N.fetch_add(1, Relaxed);
+                if n % 20 == 0 {
+                    if let Some(p) = read_cdx() {
+                        CDX_PCT.store(p, Relaxed);
+                    }
                 }
-                if let Some(d) = read_dvn() {
-                    DVN_PCT.store(d, Relaxed);
+                // Devin direct API: at start + every 15 min; fallback to json cache
+                if n % 1800 == 0 { fetch_dvn(); }
+                if n % 20 == 0 && DVN_PCT.load(Relaxed) < 0 {
+                    if let Some(d) = read_dvn() {
+                        DVN_PCT.store(d, Relaxed);
+                    }
                 }
             }
         }
@@ -1149,10 +1201,13 @@ fn popup_lines() -> Vec<String> {
         let v: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
         v.parse::<f64>().ok().map(|f| f as i64)
     };
-    v.push(match dnum("\"weekly_left\":") {
+    let (dp, dr, db) = (DVN_PCT.load(Relaxed), DVN_RESET.load(Relaxed), DVN_BAL.load(Relaxed));
+    v.push(match (if dp >= 0 { Some(dp as i64) } else { dnum("\"weekly_left\":") }) {
         Some(l) => {
-            let r = dnum("\"resets_at\":").unwrap_or(0);
-            format!("Devin [main]: {}% weekly{}", l, if r > 0 { format!(" ({})", local_dmhm(r)) } else { String::new() })
+            let r = if dr > 0 { dr } else { dnum("\"resets_at\":").unwrap_or(0) };
+            let bal = if db >= 0 { format!(" ${:.2}", db as f64 / 1e6) } else { String::new() };
+            format!("Devin [main]: {}% weekly{}{}", l,
+                if r > 0 { format!(" ({})", local_dmhm(r)) } else { String::new() }, bal)
         }
         None => "Devin [main]: — weekly".to_string(),
     });
