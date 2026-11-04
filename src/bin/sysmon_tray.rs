@@ -1134,10 +1134,12 @@ fn popup_lines() -> Vec<String> {
     };
     let acct = field("\"acct\":");
     let sec = CDX_SEC.load(Relaxed);
+    let sr = field("\"secondary_reset\":").parse::<i64>().unwrap_or(0);
     v.push(format!("Codex [{}]: {}{}", acct, if c >= 0 {
         if cr > 0 { format!("{}% 5h ({})", 100 - c, local_hhmm(cr)) } else { format!("{}% 5h", 100 - c) }
     } else { "— 5h".into() },
-        if sec >= 0 { format!(" {}% weekly", 100 - sec) } else { String::new() }));
+        if sec >= 0 { format!(" {}% weekly{}", 100 - sec,
+            if sr > 0 { format!(" ({})", local_dmhm(sr)) } else { String::new() }) } else { String::new() }));
     let dv = std::env::var("USERPROFILE").ok()
         .and_then(|h| std::fs::read_to_string(format!("{h}\\.devin_usage.json")).ok())
         .unwrap_or_default();

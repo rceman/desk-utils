@@ -17,8 +17,9 @@ $lp = ($em -split '@')[0]
 $acct = $lp.Substring(0, [Math]::Min(4, $lp.Length))
 $pl = (Select-String -Path $hf -Pattern 'x-codex-plan-type:\s*(\w+)').Matches.Groups[1].Value
 $r = (Select-String -Path $hf -Pattern 'x-codex-primary-reset-after-seconds:\s*(\d+)').Matches.Groups[1].Value
+$sr = (Select-String -Path $hf -Pattern 'x-codex-secondary-reset-after-seconds:\s*(\d+)').Matches.Groups[1].Value
 $now = [int][double]::Parse((Get-Date -UFormat %s))
 if ($p) {
-  "{`"primary_used`":$p,`"secondary_used`":$s,`"primary_reset`":$($now + [int]$r),`"plan`":`"$pl`",`"acct`":`"$acct`",`"ts`":$now}" | Set-Content "$env:USERPROFILE\.codex\limits_cache.json"
+  "{`"primary_used`":$p,`"secondary_used`":$s,`"primary_reset`":$($now + [int]$r),`"secondary_reset`":$($now + [int]$sr),`"plan`":`"$pl`",`"acct`":`"$acct`",`"ts`":$now}" | Set-Content "$env:USERPROFILE\.codex\limits_cache.json"
   Add-Content $log "$(Get-Date -Format 'HH:mm:ss') http=$code primary=$p secondary=$s reset_in=$r"
 } else { Add-Content $log "$(Get-Date -Format 'HH:mm:ss') http=$code NO HEADERS" }
