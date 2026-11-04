@@ -2,7 +2,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $log = "$env:USERPROFILE\codex_ping.log"
 $j = Get-Content "$env:USERPROFILE\.codex\auth.json" -Raw | ConvertFrom-Json
 $t = $j.tokens.access_token; $acc = $j.tokens.account_id
-$body = '{"model":"gpt-6-luna","instructions":"reply pong","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"ping"}]}],"stream":true,"store":false}'
+$body = '{"model":"gpt-6-luna","instructions":"reply pong","reasoning":{"effort":"low"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"ping"}]}],"stream":true,"store":false}'
 $bf = "$env:TEMP\cx_body.json"; $hf = "$env:TEMP\cx_hdr.txt"
 $body | Out-File -Encoding ascii $bf
 $code = curl.exe -s -o NUL -D $hf -w '%{http_code}' -X POST 'https://chatgpt.com/backend-api/codex/responses' -H "Authorization: Bearer $t" -H "chatgpt-account-id: $acc" -H 'OpenAI-Beta: responses=experimental' -H 'originator: codex_cli_rs' -H 'Content-Type: application/json' --data-binary "@$bf"
