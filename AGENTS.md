@@ -13,6 +13,14 @@
   Verify UI changes via log (`start`, `panel ready`, `kb hook=`) — silent Tk callback/hook
   crashes are invisible under pythonw. Wrap hook/worker bodies in try/except → `log()`.
 
+## Time convention (all caches/tooltips)
+
+- **All JSON caches** (`~/.codex/limits_cache.json`, `~/.devin_usage.json`) store
+  **true UTC unix epoch** — in PowerShell use `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()`
+  (NOT `Get-Date -UFormat %s`, which counts local time as UTC); in Python `time.time()`.
+- **Local conversion happens only in Rust** — `local_st()`/`local_hhmm()`/`local_dmhm()`
+  in `sysmon_tray.rs` via `FileTimeToLocalFileTime`. Never pre-offset timestamps.
+
 ## Python Win32 app practices (ScrollShot)
 
 - **WH_KEYBOARD_LL proc budget = microseconds.** No file I/O, logging, or Tk calls inside the
