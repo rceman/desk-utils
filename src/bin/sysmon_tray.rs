@@ -701,7 +701,11 @@ fn read_dvn() -> Option<i32> {
 
 fn dvn_credentials() -> Option<(String, String)> {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
-    let txt = std::fs::read_to_string(format!("{home}\\.local\\share\\devin\\credentials.toml")).ok()?;
+    let txt = [
+        format!("{home}\\.devin\\credentials.toml"),
+        format!("{home}\\.local\\share\\devin\\credentials.toml"),
+        r"\\wsl.localhost\Ubuntu\home\therceman\.local\share\devin\credentials.toml".to_string(),
+    ].iter().find_map(|p| std::fs::read_to_string(p).ok())?;
     let get = |k: &str| -> Option<String> {
         for l in txt.lines() {
             let l = l.trim();
