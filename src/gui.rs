@@ -9,7 +9,7 @@ mod actions;
 pub(crate) use state::is_elevated;
 
 use std::ffi::c_void;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -23,6 +23,35 @@ use state::*;
 use workers::*;
 
 // ---------- main window ----------
+
+static SPLIT_PCT: AtomicI32 = AtomicI32::new(58);
+static SPLITTING: AtomicBool = AtomicBool::new(false);
+
+// y of the draggable gap midpoint, mirrors layout()
+fn splitter_mid(h: i32) -> i32 {
+    let usable = (h - 44 - 78).max(60);
+    let pct = SPLIT_PCT.load(Ordering::Relaxed).clamp(15, 85);
+    44 + usable * pct / 100 + 4
+}
+
+fn over_splitter(hwnd: HWND, my: i32) -> bool {
+    let mut r = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetClientRect(hwnd, &mut r) };
+    (my - splitter_mid(r.bottom)).abs() <= 6
+}
+
+fn set_split_at(hwnd: HWND, my: i32) {
+    let mut r = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetClientRect(hwnd, &mut r) };
+    let usable = (r.bottom - 44 - 78).max(60);
+    let pct = ((my - 44) * 100 / usable).clamp(15, 85);
+    SPLIT_PCT.store(pct, Ordering::Relaxed);
+    layout(r.right, r.bottom);
+}
+
+fn sizens_cursor() -> HCURSOR {
+    unsafe { LoadCursorW(std::ptr::null_mut(), 32645usize as *const u16) }
+}
 
 unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
     match msg {
@@ -67,6 +96,48 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, w: usize, l: isize) ->
                 start_scan(root);
             });
             0
+        }
+        WM_LBUTTONDOWN => {
+            let my = ((l >> 16) & 0xFFFF) as i16 as i32;
+            if over_splitter(hwnd, my) {
+                unsafe { SetCapture(hwnd) };
+                SPLITTING.store(true, Ordering::Relaxed);
+            }
+            0
+        }
+        WM_MOUSEMOVE => {
+            let my = ((l >> 16) & 0xFFFF) as i16 as i32;
+            if SPLITTING.load(Ordering::Relaxed) {
+                set_split_at(hwnd, my);
+            } else if over_splitter(hwnd, my) {
+                unsafe { SetCursor(sizens_cursor()) };
+            }
+            0
+        }
+        WM_LBUTTONUP => {
+            if SPLITTING.swap(false, Ordering::Relaxed) {
+                unsafe { ReleaseCapture() };
+            }
+            0
+        }
+        WM_CAPTURECHANGED => {
+            SPLITTING.store(false, Ordering::Relaxed);
+            0
+        }
+        WM_SETCURSOR => {
+            // LOWORD(w) == HTCLIENT(1): over gap -> size cursor, swallow default
+            if (w & 0xFFFF) == 1 && !SPLITTING.load(Ordering::Relaxed) {
+                let (mut gx, mut gy) = (0i32, 0i32);
+                unsafe {
+                    GetCursorPos(&mut gx, &mut gy);
+                    ScreenToClient(hwnd, &mut gx, &mut gy);
+                }
+                if over_splitter(hwnd, gy) {
+                    unsafe { SetCursor(sizens_cursor()) };
+                    return 1;
+                }
+            }
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
         }
         WM_SIZE => {
             let w = (l & 0xFFFF) as i32;
@@ -159,8 +230,9 @@ fn layout(w: i32, h: i32) {
     let wnds = WNDS.lock().unwrap();
     // two scrollable areas: tree on top (~58%), largest list below
     let usable = h - 44 - 78;
-    let tree_h = usable * 58 / 100;
-    let list_y = 44 + tree_h + 6;
+    let pct = SPLIT_PCT.load(Ordering::Relaxed).clamp(15, 85);
+    let tree_h = usable * pct / 100;
+    let list_y = 44 + tree_h + 8;
     let list_h = (44 + usable) - list_y - 6;
     unsafe {
         MoveWindow(wnds.edit as HWND, 8, 44, w - 16, tree_h, 1);

@@ -309,12 +309,12 @@ pub(crate) fn context_menu(hwnd: HWND, lparam: isize) {
     let menu = unsafe { CreatePopupMenu() };
     unsafe {
         AppendMenuW(menu, MF_STRING, ID_CTX_EXPLORER, wide("Open in Explorer").as_ptr());
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            ID_CTX_COPYPATH,
-            wide("Copy path").as_ptr(),
-        );
+        let copy_label = if paths.len() == 1 {
+            "Copy path".to_string()
+        } else {
+            format!("Copy {} paths", paths.len())
+        };
+        AppendMenuW(menu, MF_STRING, ID_CTX_COPYPATH, wide(&copy_label).as_ptr());
         let label = if paths.len() == 1 {
             "Send to Recycle Bin".to_string()
         } else {
@@ -340,7 +340,10 @@ pub(crate) fn context_menu(hwnd: HWND, lparam: isize) {
         DestroyMenu(menu);
         match cmd as usize {
             ID_CTX_EXPLORER => open_in_explorer(&paths[0]),
-            ID_CTX_COPYPATH => copy_path_to_clipboard(hwnd, &disp(&paths[0])),
+            ID_CTX_COPYPATH => {
+                let joined = paths.iter().map(|p| disp(p)).collect::<Vec<_>>().join("\r\n");
+                copy_path_to_clipboard(hwnd, &joined)
+            }
             ID_CTX_DELETE => delete_to_recycle(hwnd, &paths),
             _ => {}
         }
